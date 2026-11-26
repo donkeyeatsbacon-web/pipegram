@@ -49,9 +49,13 @@ const C_CELL        := Color("222835")
 const C_CELL_ALT    := Color("262d3b")
 const C_GRID        := Color("323b4d")
 const C_GRID_BOLD   := Color("46526b")
-const C_PIPE_DARK   := Color("6b4420")
-const C_PIPE        := Color("c98a4b")
-const C_PIPE_HI     := Color("e8bd86")
+const C_PIPE_SHADOW := Color("27160a")   # the rim that separates pipe from board
+const C_PIPE_DARK   := Color("6b4420")   # underside of the tube
+const C_PIPE        := Color("b87c41")   # body
+const C_PIPE_LIGHT  := Color("dda268")   # lit side
+const C_PIPE_HI     := Color("f2d2a6")   # specular streak
+const C_FLANGE      := Color("8c5e2e")   # collars at the section joins
+const C_WATER_DEEP  := Color("1c6f9e")   # shaded edge of the channel
 const C_WATER       := Color("3fb6e8")
 const C_WATER_HI    := Color("9fe4ff")
 const C_BLOCK       := Color("4b5568")
@@ -126,6 +130,7 @@ var drag_to := UNKNOWN
 var painted: Dictionary = {}
 var hover := Vector2i(-1, -1)
 var buttons: Array = []
+var pipe_flanges: Array = []   # collars, drawn over the water
 var mouse := Vector2.ZERO
 
 # headless screenshot mode
@@ -801,6 +806,7 @@ func _draw() -> void:
 	_draw_pipes()
 	if solved or flowing:
 		_draw_water()
+	_draw_flanges()
 	_draw_taps()
 	if lost:
 		_draw_burst()
@@ -943,42 +949,77 @@ func _cell_centre(c: Vector2i) -> Vector2:
 
 
 func _draw_pipes() -> void:
-	var thick := cell * 0.34
-	# outline pass, then the metal, so joints read as one continuous run
-	for pass_i in 2:
-		var col := C_PIPE_DARK if pass_i == 0 else C_PIPE
-		var wdt := thick + maxf(cell * 0.09, 3.0) if pass_i == 0 else thick
-		for y in H:
-			for x in W:
-				if marks[y][x] != PIPE:
-					continue
-				var c := Vector2i(x, y)
-				var ctr := _cell_centre(c)
-				var conns := _connections(c)
-				draw_circle(ctr, wdt * 0.5, col)
-				for d in conns:
-					draw_line(ctr, ctr + Vector2(d) * (cell * 0.5 + 0.5), col, wdt, true)
-				if conns.is_empty():
-					draw_circle(ctr, wdt * 0.5, col)
+	## Drawn as a lit tube rather than a flat line: a dark rim, a body, a lit
+	## side and a specular streak, all offset towards a light up and to the
+	## left. Collars go on at the section joins afterwards, over the water, the
+	## way a real coupling wraps the outside of the pipe.
+	var w := cell * 0.36
+	pipe_flanges.clear()
 
-	# a highlight line along the top of each run, for a bit of roundness
+	var legs: Array = []          # [centre, outer end, direction]
+	var joints: Array = []        # cell centres, where legs meet
 	for y in H:
 		for x in W:
 			if marks[y][x] != PIPE:
 				continue
 			var c := Vector2i(x, y)
 			var ctr := _cell_centre(c)
-			for d in _connections(c):
-				var off := Vector2(-d.y, d.x) * (thick * 0.26)
-				draw_line(ctr + off, ctr + Vector2(d) * (cell * 0.5) + off,
-						Color(C_PIPE_HI.r, C_PIPE_HI.g, C_PIPE_HI.b, 0.55),
-						maxf(thick * 0.17, 1.0), true)
+			var conns := _connections(c)
+			joints.append(ctr)
+			for d in conns:
+				var dv := Vector2(d)
+				# overshoot slightly so neighbouring cells meet with no seam
+				legs.append([ctr, ctr + dv * (cell * 0.5 + 0.7), dv])
+				pipe_flanges.append([ctr + dv * (cell * 0.5), dv])
+
+	# light from the upper left: for a horizontal run that is upwards, for a
+	# vertical run it is to the left
+	var lit := func(d: Vector2, amount: float) -> Vector2:
+		return Vector2(-absf(d.y), -absf(d.x)) * amount
+
+	# Each layer is drawn across every leg before the next starts, so one
+	# cell's rim can never land on top of a neighbour's body.
+	var layers := [
+		[C_PIPE_SHADOW, 1.10, 0.00],
+		[C_PIPE_DARK,   0.94, 0.00],
+		[C_PIPE,        0.74, 0.08],
+		[C_PIPE_LIGHT,  0.40, 0.20],
+		[C_PIPE_HI,     0.15, 0.29],
+	]
+	for layer in layers:
+		var col: Color = layer[0]
+		var mul: float = layer[1]
+		var shift: float = layer[2]
+		for l in legs:
+			var off: Vector2 = lit.call(l[2], w * shift)
+			draw_line(l[0] + off, l[1] + off, col, w * mul, true)
+		# a blob at the middle rounds the elbows and caps a lone stub
+		var joff := Vector2(-w * shift, -w * shift) * 0.7
+		for p in joints:
+			draw_circle(p + joff, w * mul * 0.5, col)
+
+
+func _draw_flanges() -> void:
+	## Collars at every cell boundary the pipe crosses -- the detail that reads
+	## as "sections of pipe bolted together" rather than "a drawn line".
+	var w := cell * 0.36
+	for f in pipe_flanges:
+		var p: Vector2 = f[0]
+		var d: Vector2 = f[1]
+		var side := Vector2(-d.y, d.x)
+		draw_line(p - side * w * 0.72, p + side * w * 0.72,
+				C_PIPE_SHADOW, w * 0.34, true)
+		draw_line(p - side * w * 0.66, p + side * w * 0.66,
+				C_FLANGE, w * 0.22, true)
+		draw_line(p - side * w * 0.66 - d * w * 0.06,
+				p + side * w * 0.66 - d * w * 0.06,
+				C_PIPE_LIGHT, w * 0.07, true)
 
 
 func _draw_water() -> void:
 	if sol_path.is_empty():
 		return
-	var thick := cell * 0.34 * 0.56
+	var thick := cell * 0.36 * 0.50
 	var last := float(sol_path.size() - 1)
 
 	# `water` is 0..1 across the route, so the front sits exactly at
@@ -998,12 +1039,25 @@ func _draw_water() -> void:
 		head = _cell_centre(sol_path[full]).lerp(_cell_centre(sol_path[full + 1]), frac)
 		pts.append(head)
 
+	# shaded channel, brighter core, then a sheen along the top: it has to read
+	# as liquid sitting inside the bore, not a line painted over the pipe
+	# Each colour finishes before the next starts. Painting the shaded circles
+	# after the bright core left a ring at every cell centre.
 	if pts.size() >= 2:
-		draw_polyline(pts, C_WATER, thick, true)
-	# round off the corners a mitred polyline leaves sharp
+		draw_polyline(pts, C_WATER_DEEP, thick, true)
 	for i in range(pts.size() - 1):
-		draw_circle(pts[i], thick * 0.5, C_WATER)
-	draw_circle(head, thick * 0.62, C_WATER_HI)
+		draw_circle(pts[i], thick * 0.5, C_WATER_DEEP)
+	if pts.size() >= 2:
+		draw_polyline(pts, C_WATER, thick * 0.64, true)
+	for i in range(pts.size() - 1):
+		draw_circle(pts[i], thick * 0.32, C_WATER)
+	if pts.size() >= 2:
+		var sheen := PackedVector2Array()
+		for p in pts:
+			sheen.append(p + Vector2(-thick * 0.15, -thick * 0.21))
+		draw_polyline(sheen, Color(C_WATER_HI.r, C_WATER_HI.g, C_WATER_HI.b, 0.45),
+				thick * 0.20, true)
+	draw_circle(head, thick * 0.58, C_WATER_HI)
 
 
 func _draw_taps() -> void:
