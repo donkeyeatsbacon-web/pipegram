@@ -117,6 +117,10 @@ var gutter_t := 90.0
 var clue_font := 18
 
 # input
+# What a plain drag paints. On a desktop the right button does the opposite, but
+# a phone has no right button, so this toggle is the only way to reach both.
+# Godot's emulate_mouse_from_touch is on, so a finger arrives as a left drag.
+var paint_mode := PIPE
 var dragging := false
 var drag_to := UNKNOWN
 var painted: Dictionary = {}
@@ -383,7 +387,7 @@ func _trace_solution() -> Array:
 func _layout() -> void:
 	var avail_w := VW - 40.0
 	# board bottom lands at 196 + avail_h, which must stay clear of the banner
-	var avail_h := 640.0
+	var avail_h := 620.0
 
 	# The gutters have to hold the longest clue in either direction, so size
 	# the cells and the gutters together: two passes settle it.
@@ -434,6 +438,10 @@ func _mark_at(c: Vector2i) -> int:
 	if not _in_grid(c):
 		return BLOCKED       # outside the grid counts as "no pipe"
 	return marks[c.y][c.x]
+
+
+func _other_mark(m: int) -> int:
+	return BLOCKED if m == PIPE else PIPE
 
 
 func _is_given(c: Vector2i) -> bool:
@@ -658,15 +666,15 @@ func _unhandled_input(event: InputEvent) -> void:
 			var left := mb.button_index == MOUSE_BUTTON_LEFT
 			if not left and mb.button_index != MOUSE_BUTTON_RIGHT:
 				return
+			var want: int = paint_mode if left else _other_mark(paint_mode)
 			if _is_given(c):
 				# A tap is fixed pipe, so taking its mark as the drag mode would
 				# turn the gesture into an eraser. Starting a drag at the inlet
-				# is how you naturally begin, so make it lay pipe outwards.
-				drag_to = PIPE if left else BLOCKED
-			elif left:
-				drag_to = UNKNOWN if cur == PIPE else PIPE
+				# is how you naturally begin, so make it paint outwards.
+				drag_to = want
 			else:
-				drag_to = UNKNOWN if cur == BLOCKED else BLOCKED
+				# dragging off a cell that already has this mark rubs it out
+				drag_to = UNKNOWN if cur == want else want
 			dragging = true
 			painted = {c: true}
 			_set_mark(c, drag_to)
@@ -683,6 +691,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_H: _do_action("hint")
 			KEY_M: _do_action("errors")
 			KEY_F: _do_action("mode")
+			KEY_SPACE, KEY_TAB: _do_action("tap")
 			KEY_Z: _undo()
 			KEY_ESCAPE: get_tree().quit()
 
@@ -724,6 +733,9 @@ func _do_action(a: String) -> void:
 				pressure_left = PRESSURE_SECONDS
 				grace_left = GRACE_BASE + GRACE_PER_CELL * float(sol_path.size())
 				queue_redraw()
+		"tap":
+			paint_mode = _other_mark(paint_mode)
+			queue_redraw()
 		"hint": _give_hint()
 
 
@@ -1046,11 +1058,35 @@ func _draw_footer() -> void:
 		["‹ Prev", "prev", false], ["Reset", "reset", false], ["Hint", "hint", false],
 		[mode_label, "mode", mode_off], ["Next ›", "next", false],
 	]
+	# --- what a tap does: the primary control once there is no right button --
+	var tr := Rect2(20.0, 908.0, VW - 40.0, 64.0)
+	var laying := paint_mode == PIPE
+	var tint := C_PIPE if laying else C_BLOCK
+	draw_rect(tr, C_BTN_HOT if tr.has_point(mouse) else C_BTN, true)
+	draw_rect(tr, tint, false, 2.0)
+
+	# a swatch of what a tap puts down
+	var sw := Rect2(tr.position + Vector2(16.0, 12.0), Vector2(40.0, 40.0))
+	draw_rect(sw, C_CELL, true)
+	var sc := sw.position + sw.size * 0.5
+	if laying:
+		draw_line(sc - Vector2(20, 0), sc + Vector2(20, 0), C_PIPE_DARK, 17.0, true)
+		draw_line(sc - Vector2(20, 0), sc + Vector2(20, 0), C_PIPE, 11.0, true)
+	else:
+		draw_line(sc + Vector2(-11, -11), sc + Vector2(11, 11), C_BLOCK, 4.0, true)
+		draw_line(sc + Vector2(-11, 11), sc + Vector2(11, -11), C_BLOCK, 4.0, true)
+
+	_text_c("tap lays PIPE" if laying else "tap marks EMPTY",
+			Vector2(VW * 0.5, 938), 21, tint)
+	_text_c("tap here to switch   ·   on a mouse, right-drag does the other",
+			Vector2(VW * 0.5, 961), 14, C_TEXT_DIM)
+	buttons.append({"rect": tr, "action": "tap"})
+
 	var total := VW - 40.0
 	var gap := 8.0
 	var bw := (total - gap * (labels.size() - 1)) / labels.size()
-	var by := 940.0
-	var bh := 54.0
+	var by := 982.0
+	var bh := 48.0
 	for i in labels.size():
 		var r := Rect2(20.0 + i * (bw + gap), by, bw, bh)
 		var off: bool = labels[i][2]
@@ -1063,16 +1099,14 @@ func _draw_footer() -> void:
 		buttons.append({"rect": r, "action": labels[i][1]})
 
 	# legend for the two taps
-	var ly := 1018.0
+	var ly := 1048.0
 	draw_circle(Vector2(254, ly - 5), 6.0, C_GOOD)
 	_text_c("inlet", Vector2(290, ly), 15, C_TEXT_DIM)
 	draw_circle(Vector2(430, ly - 5), 6.0, C_WATER)
 	_text_c("outlet", Vector2(470, ly), 15, C_TEXT_DIM)
 
-	_text_c("left drag: lay pipe   ·   right drag: mark empty   ·   Z undo   ·   F mode   ·   H hint",
-			Vector2(VW * 0.5, 1044), 15, C_TEXT_DIM)
 	_text_c("the pipe never runs alongside itself — touching pipe cells are always joined",
-			Vector2(VW * 0.5, 1068), 15, C_TEXT_DONE)
+			Vector2(VW * 0.5, 1070), 15, C_TEXT_DONE)
 
 
 func _draw_burst() -> void:
@@ -1091,29 +1125,29 @@ func _draw_burst() -> void:
 
 
 func _draw_lost_banner() -> void:
-	var r := Rect2(20.0, 842.0, VW - 40.0, 88.0)
+	var r := Rect2(20.0, 820.0, VW - 40.0, 80.0)
 	draw_rect(r, Color(C_BAD.r * 0.26, C_BAD.g * 0.12, C_BAD.b * 0.16, 0.95), true)
 	draw_rect(r, C_BAD, false, 2.0)
-	_text_c("BURST", Vector2(VW * 0.5, 880), 30, C_BAD)
+	_text_c("BURST", Vector2(VW * 0.5, 854), 28, C_BAD)
 	var laid := _laid_prefix()
 	var why := "the water caught up with your plumbing"
 	if _find_leak(int(flow_pos)).x >= 0:
 		why = "the water found pipe that was never on the route"
 	_text_c("%s — %d of %d cells laid. Click to try again."
 			% [why, laid, sol_path.size()],
-			Vector2(VW * 0.5, 912), 16, C_TEXT)
+			Vector2(VW * 0.5, 884), 16, C_TEXT)
 
 
 func _draw_banner() -> void:
-	var r := Rect2(20.0, 842.0, VW - 40.0, 88.0)
+	var r := Rect2(20.0, 820.0, VW - 40.0, 80.0)
 	draw_rect(r, Color(C_GOOD.r * 0.18, C_GOOD.g * 0.3, C_GOOD.b * 0.22, 0.95), true)
 	draw_rect(r, C_GOOD, false, 2.0)
-	_text_c("WATER'S ON", Vector2(VW * 0.5, 880), 30, C_GOOD)
+	_text_c("WATER'S ON", Vector2(VW * 0.5, 854), 28, C_GOOD)
 	var mins := int(elapsed) / 60
 	var secs := int(elapsed) % 60
 	_text_c("%d cells of pipe in %d:%02d — click anywhere for the next one"
 			% [solution.size(), mins, secs],
-			Vector2(VW * 0.5, 912), 16, C_TEXT)
+			Vector2(VW * 0.5, 884), 16, C_TEXT)
 
 
 # ---- text helpers --------------------------------------------------------

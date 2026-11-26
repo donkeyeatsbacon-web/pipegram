@@ -82,8 +82,9 @@ way down.
 
 | | |
 |---|---|
-| Left click / drag | lay pipe (start on pipe to rub it out) |
-| Right click / drag | mark a cell empty (start on a mark to rub it out) |
+| Left click / drag, or finger drag | paint whatever the tap-mode button shows (start on a cell that already has it to rub it out) |
+| The wide **tap lays PIPE / tap marks EMPTY** button, or `Space` | switch what a tap paints |
+| Right click / drag | paint the *other* mark — a mouse shortcut, so you needn't keep switching |
 | `Z` | undo |
 | `F` | switch Flow / Zen (restarts the puzzle) |
 | `R` | reset · `N` / `P` next & previous · `H` hint · `M` toggle error highlighting |
@@ -111,6 +112,24 @@ single binary with no installer.
 
 Built against **Godot 4.7.2**, GL Compatibility renderer — light enough for the
 GTX 750 Ti, and the same renderer you'd ship to Android.
+
+### Playing in a browser
+
+```bash
+godot --headless --path . --export-release "Web" build/web/index.html
+python3 -m http.server 8099 --bind 127.0.0.1 --directory build/web
+```
+
+Then open <http://127.0.0.1:8099/>. It needs a web server — opening `index.html`
+straight off disk will not work.
+
+The preset sets `variant/thread_support=false` on purpose. The threaded build
+needs `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy` headers,
+which GitHub Pages and itch.io do not send; the no-threads build runs anywhere.
+
+Touch works because Godot's `emulate_mouse_from_touch` turns a finger drag into
+a left-button drag. What touch *cannot* reach is the right button, which is why
+marking cells empty needs the tap-mode toggle.
 
 ## Puzzles
 
