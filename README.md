@@ -2,6 +2,9 @@
 
 Pipe Dream's plumbing, a nonogram's clues. A prototype.
 
+**▶ Play it: <https://donkeyeatsbacon-web.github.io/pipegram/>** — works on a
+phone; the first load pulls about 10 MB.
+
 ## The idea
 
 A single pipe runs from an **inlet** to an **outlet**. Its route is fixed before
@@ -192,7 +195,19 @@ do first:
   sound — a rising trickle and a bang are half the tension.
 - Flow timings are a first pass. See the table above.
 - Puzzles are a fixed baked set; generation does not run in-game.
-- Touch input is untested — the click handling is mouse-shaped, and a phone
-  needs a drag-threshold and a bigger tap target.
+- Touch is playable but not polished: no drag threshold, so a sloppy tap can
+  paint two cells, and there is no pinch-zoom on the bigger grids.
 - Difficulty is just grid size. Real difficulty wants a measure of *how hard
   the deduction chain is*, not how big the board is.
+
+### Redeploying after a change
+
+```bash
+godot --headless --path . --export-release "Web" build/web/index.html
+git worktree add -B gh-pages /tmp/pg-pages main
+cd /tmp/pg-pages && git rm -rq . && cp -a "$OLDPWD/build/web/." . && touch .nojekyll
+git add -A && git commit -m "Deploy web build" && git push -f origin gh-pages
+cd - && git worktree remove /tmp/pg-pages
+```
+
+Pages serves the `gh-pages` branch, so `main` stays free of binaries.
