@@ -6,29 +6,117 @@ extends Node2D
 ##
 ## One pipe runs from the inlet to the outlet. The numbers down the side and
 ## across the top are nonogram run-length clues: how many pipe cells sit in a
-## row, in order, with a gap between runs. The twist that makes it a plumbing
-## puzzle rather than a picture puzzle: the pipe never runs alongside itself,
-## so two pipe cells touch only where the pipe actually connects them. Work out
-## which cells hold pipe and every elbow and straight is forced -- the pipework
-## draws itself.
+## line, in order, with a gap between runs.
 ##
-## Left click / drag  lay pipe   (start on pipe to rub it out)
-## Right click / drag mark empty (start on a mark to rub it out)
+## Pipe cells may sit side by side WITHOUT being joined, so knowing which cells
+## hold pipe does not tell you how they connect. Working out the fittings is a
+## second deduction on top of the fill:
+##
+##   straight  two ends opposite each other
+##   elbow     two ends at right angles
+##   cross     four ends -- the route passing over itself
+##
+## Nothing branches, nothing dead-ends. The inlet and the outlet have one end
+## each; everything else has two, or four where the route crosses. The header
+## tells you how many crossings there are.
+##
+## Pick a fitting from the palette, tap a cell to lay it, tap again to rotate.
 ##
 
-const VW := 760.0          # design viewport
-const VH := 1080.0
+var VW := 760.0            # design viewport, swapped for landscape layouts
+var VH := 1080.0
 
-# cell marks
+# cell marks -- the fill layer
 const UNKNOWN := 0
 const PIPE := 1
 const BLOCKED := 2
 
+# A fitting is a bitmask of the sides it opens onto, in DIRS order.
 const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
+const BITS := [1, 2, 4, 8]                 # N E S W
+const STRAIGHTS := [10, 5]                 # E|W, N|S
+const ELBOWS := [3, 6, 12, 9]              # N|E, E|S, S|W, W|N
+const MASK_CROSS := 15
+const MASK_NONE := 0                       # pipe laid, fitting not chosen yet
+
+# tools
+const TOOL_PIPE := 0       # plain pipe, fitting left for later
+const TOOL_EMPTY := 1      # cross it off
+const TOOL_STRAIGHT := 2
+const TOOL_ELBOW := 3
+const TOOL_CROSS := 4
 
 # modes
 const MODE_ZEN := 0                # no clock, solve it in your own time
 const MODE_FLOW := 1               # the water is coming
+
+# --- layout variants -------------------------------------------------------
+# Every screen arrangement worth trying, each playable so it can be judged by
+# playing rather than by looking at a picture. Press L for the picker.
+const HDR_FULL := 0        # title, tagline, label, clue, timer, flow line
+const HDR_TIGHT := 1       # one title line plus a single status strip
+const HDR_CHIP := 2        # just a thin strip; the board takes the rest
+
+const CHROME_ROWS := 0     # palette row over a nav row -- what we have now
+const CHROME_PANEL := 1    # palette raised on a panel, nav dimmed to chrome
+const CHROME_BAR := 2      # one tool chip; the palette slides up on demand
+const CHROME_PAD := 3      # 3x3 thumb pad in the corner, nav beside it
+const CHROME_NONE := 4     # no palette at all -- the input carries it
+const CHROME_SIDE := 5     # columns down both edges, for landscape
+const CHROME_TRAY := 6     # a workbench parts tray
+
+const IN_PALETTE := 0      # pick a fitting, tap to lay, tap again to rotate
+const IN_HANDLE := 1       # a rotate handle in the corner of the cell
+const IN_DRAG := 2         # the drag's own path decides the fitting
+const IN_RADIAL := 3       # press and hold for a ring of all seven
+const IN_CYCLE := 4        # a tap cycles the states your marks allow
+
+const TOOL_NAMES := ["pipe", "empty", "straight", "elbow", "cross"]
+const TOOL_ACTIONS := ["tool_pipe", "tool_empty", "tool_straight", "tool_elbow",
+		"tool_cross"]
+const RULE_LINE := "pipe cells can sit side by side without joining — the fittings are the second puzzle"
+# The radial, clockwise from the top. The elbows sit on the diagonals that
+# match their own shape, which is the whole reason this one is worth trying.
+const RADIAL_SLOTS := [5, 3, 10, 6, 15, 12, -1, 9]
+
+var LAYOUTS: Array = [
+	{"name": "As it is now", "tier": "baseline",
+	 "note": "the arrangement you have been playing"},
+	{"name": "Tight header", "tier": "slight", "hdr": HDR_TIGHT,
+	 "note": "title and status on two lines — about 80px back into the board"},
+	{"name": "Clear hierarchy", "tier": "slight", "chrome": CHROME_PANEL,
+	 "note": "palette raised on its own panel, the rest dimmed to chrome"},
+	{"name": "Board into the banner", "tier": "slight", "grow": true,
+	 "note": "the dead win/lose strip given to the board; banner overlays it"},
+	{"name": "Rotate handle in the cell", "tier": "slight", "input": IN_HANDLE,
+	 "note": "a corner handle turns a fitting; the cell body re-lays it"},
+	{"name": "Orient from the drag", "tier": "moderate", "input": IN_DRAG,
+	 "note": "drag in and out of a cell and it fits the elbow to your stroke"},
+	{"name": "Thumb pad", "tier": "moderate", "chrome": CHROME_PAD,
+	 "note": "fittings in a 3x3 under your thumb, nav stacked beside it"},
+	{"name": "Pressure ring", "tier": "moderate", "ring": true,
+	 "note": "the Flow countdown drawn around the water's head, not up top"},
+	{"name": "Clue rails all round", "tier": "moderate", "rails": true,
+	 "note": "clues repeated right and bottom so one is always near your work"},
+	{"name": "Long-press radial", "tier": "radical",
+	 "input": IN_RADIAL, "chrome": CHROME_NONE,
+	 "note": "hold a cell, a ring of all seven fittings blooms; slide and let go"},
+	{"name": "Landscape, two-handed", "tier": "radical",
+	 "land": true, "chrome": CHROME_SIDE, "hdr": HDR_TIGHT,
+	 "note": "board centred, fittings under the left thumb, utilities right"},
+	{"name": "Board first", "tier": "radical",
+	 "hdr": HDR_CHIP, "chrome": CHROME_BAR, "grow": true,
+	 "note": "board fills the screen; the controls slide up when you want them"},
+	{"name": "No tools at all", "tier": "radical",
+	 "input": IN_CYCLE, "chrome": CHROME_NONE,
+	 "note": "a tap cycles only the fittings your own marks allow — no palette"},
+	{"name": "Workbench", "tier": "radical",
+	 "chrome": CHROME_TRAY, "hdr": HDR_TIGHT,
+	 "note": "blueprint on a bench, fittings in a parts tray, a pressure gauge"},
+	{"name": "Recommended: 1 + 2 + 3 + 7", "tier": "combination",
+	 "hdr": HDR_TIGHT, "chrome": CHROME_PANEL, "grow": true, "ring": true,
+	 "note": "the three cheap wins plus the pressure ring, all together"},
+]
 
 # Flow timings. These are the dials to turn after a playtest: they decide
 # whether this is tense or merely unfair.
@@ -67,6 +155,11 @@ const C_GOOD        := Color("6fd08c")
 const C_ACCENT      := Color("f0b45e")
 const C_BTN         := Color("2a3240")
 const C_BTN_HOT     := Color("3a4556")
+const C_BENCH       := Color("2b2118")   # workbench: the bench itself
+const C_BENCH_DARK  := Color("1d160f")
+const C_BP_PANEL    := Color("17344a")   # workbench: blueprint paper
+const C_BP_CELL     := Color("1b3d57")
+const C_BP_ALT      := Color("1e4460")
 
 # --- state ----------------------------------------------------------------
 var font: Font
@@ -79,38 +172,59 @@ var row_clues: Array = []
 var col_clues: Array = []
 var inlet := Vector2i.ZERO
 var outlet := Vector2i.ZERO
-var solution: Dictionary = {}      # Vector2i -> true
-var sol_path: Array = []           # ordered cells, inlet .. outlet
+var solution: Dictionary = {}      # Vector2i -> fitting mask
+var sol_walk: Array = []           # the route in order; a cross appears twice
+var sol_crosses := 0
 
-var marks: Array = []              # marks[y][x]
+var marks: Array = []              # marks[y][x]: UNKNOWN / PIPE / BLOCKED
+var pieces: Array = []             # pieces[y][x]: fitting mask, 0 = undecided
 var undo_stack: Array = []
 
 var solved := false
-var water := 0.0                   # 0..1 animation along sol_path
 var elapsed := 0.0
+
+# The water's route is the player's own pipework, traced from the inlet
+# through whatever fittings they have laid. Recomputed on every change.
+var route: Array = []              # cells the water passes through, in order
+var route_fault := -1              # index where it leaves the real route
 
 # --- flow mode -------------------------------------------------------------
 # Pipe Dream's pressure, adapted to a route you deduce rather than build.
-# After a thinking period the water sets off from the inlet and runs along the
-# pipe you have actually laid. It can only travel cells of the real route, so
-# it tells you nothing you have not earned. Two ways to drown:
-#   * it catches up with your plumbing and the pressure builds until a joint
-#     goes (you were not laying pipe fast enough);
-#   * it reaches a cell with pipe hanging off it that is not on the route --
-#     a leak. A wrong guess only bites once the water gets there.
+# After a thinking period the water sets off from the inlet and follows the
+# fittings you have actually laid. Two ways to drown:
+#   * it runs out of pipework and the pressure builds until a joint goes;
+#   * it is routed somewhere the real pipe never went -- a leak. A wrong
+#     fitting only bites once the water gets to it.
 var mode := MODE_FLOW
 var lost := false
 var zen_locked := false            # this puzzle has been dropped to Zen for good
 var flowing := false               # grace is over, water is on the move
 var grace_left := 0.0
-var flow_pos := 0.0                # position along sol_path, in cells
+var flow_pos := 0.0                # how far along `route` the water has got
 var flow_spc := 4.0                # seconds per cell
 var pressure_left := 0.0
 var burst_cell := Vector2i(-1, -1)
+var burst_leak := false            # a leak, rather than the pressure
 # Off by default on purpose: flagging a wrong pipe the moment it is laid hands
 # the player the deduction they came to make. Opt in with the button or M.
 var show_errors := false
 var hint_cells: Dictionary = {}    # cells given away by Hint
+
+# the active layout
+var layout := 0
+var L: Dictionary = {}
+var head_h := 208.0               # height the header reserves
+var ctrl_h := 176.0               # height the controls reserve at the bottom
+var banner_gap := 90.0            # the strip the win/lose banner sits in
+var side_w := 0.0                 # columns down each edge, for landscape
+var picking := false              # the layout picker is open
+var bar_open := false             # CHROME_BAR: the palette is slid up
+var press_at := 0.0               # how long the current press has been held
+var press_cell := Vector2i(-1, -1)
+var radial_cell := Vector2i(-1, -1)
+var radial_pick := -1
+var drag_entry: Dictionary = {}   # IN_DRAG: which side the stroke entered by
+var last_painted := Vector2i(-1, -1)
 
 # geometry, recomputed per puzzle
 var cell := 48.0
@@ -118,26 +232,31 @@ var origin := Vector2.ZERO
 var gutter := 90.0
 var gutter_l := 90.0
 var gutter_t := 90.0
+var gutter_r := 0.0
+var gutter_b := 0.0
 var clue_font := 18
 
 # input
-# What a plain drag paints. On a desktop the right button does the opposite, but
-# a phone has no right button, so this toggle is the only way to reach both.
-# Godot's emulate_mouse_from_touch is on, so a finger arrives as a left drag.
-var paint_mode := PIPE
+var tool := TOOL_PIPE
+var rot_straight := 0
+var rot_elbow := 0
 var dragging := false
-var drag_to := UNKNOWN
+var drag_fill := UNKNOWN           # what a fill-tool drag is painting
 var painted: Dictionary = {}
 var hover := Vector2i(-1, -1)
 var buttons: Array = []
-var pipe_flanges: Array = []   # collars, drawn over the water
+var pipe_flanges: Array = []       # collars, drawn over the water
+var cross_cells: Array = []        # redrawn over the water as an overpass
 var mouse := Vector2.ZERO
 
 # headless screenshot mode
 var shot_path := ""
 var shot_solve := false
 var shot_flow := false
+var shot_press := false
+var shot_radial := false
 var logic_test := false
+var layout_audit := false
 
 
 func _ready() -> void:
@@ -148,16 +267,86 @@ func _ready() -> void:
 		push_error("No puzzles found at res://data/puzzles.json -- run tools/generate.py")
 		return
 	if logic_test:
+		_apply_layout()
 		_logic_test()
 		return
+	_apply_layout()
 	_load_puzzle(index)
+	if layout_audit:
+		await _audit_all()
+		return
 	if shot_path != "":
 		await _take_shot()
 
 
+# =========================================================================
+#  fittings
+# =========================================================================
+
+func _pop(m: int) -> int:
+	var n := 0
+	while m != 0:
+		n += m & 1
+		m >>= 1
+	return n
+
+
+func _bit_of_dir(d: Vector2i) -> int:
+	var i: int = DIRS.find(d)
+	return BITS[i] if i >= 0 else 0
+
+
+func _dir_of_bit(b: int) -> Vector2i:
+	var i: int = BITS.find(b)
+	return DIRS[i] if i >= 0 else Vector2i.ZERO
+
+
+func _opp_bit(b: int) -> int:
+	return ((b << 2) | (b >> 2)) & 15
+
+
+func _tool_mask(t: int) -> int:
+	match t:
+		TOOL_STRAIGHT: return STRAIGHTS[rot_straight]
+		TOOL_ELBOW: return ELBOWS[rot_elbow]
+		TOOL_CROSS: return MASK_CROSS
+	return MASK_NONE
+
+
+func _mask_kind(m: int) -> int:
+	## Which tool laid this fitting, or -1 for none.
+	if m == MASK_CROSS:
+		return TOOL_CROSS
+	if STRAIGHTS.has(m):
+		return TOOL_STRAIGHT
+	if ELBOWS.has(m):
+		return TOOL_ELBOW
+	return -1
+
+
+func _rotate_mask(m: int, by: int) -> int:
+	var k := _mask_kind(m)
+	if k == TOOL_STRAIGHT:
+		return STRAIGHTS[posmod(STRAIGHTS.find(m) + by, 2)]
+	if k == TOOL_ELBOW:
+		return ELBOWS[posmod(ELBOWS.find(m) + by, 4)]
+	return m
+
+
+# =========================================================================
+#  tests
+# =========================================================================
+
+func _lay_solution() -> void:
+	for c in solution:
+		_set_piece(c, int(solution[c]))
+	_retrace()
+
+
 func _flow_test(i: int) -> Array[String]:
-	## Drive flow mode through its three endings: water reaches the outlet,
-	## water catches up and bursts, water finds a wrong joint and bursts.
+	## Drive flow mode through its endings: the water gets home, the water
+	## catches up and bursts, the water is routed into pipe that was never on
+	## the route and bursts there.
 	var errs: Array[String] = []
 	var step := 0.25
 	mode = MODE_FLOW
@@ -166,8 +355,7 @@ func _flow_test(i: int) -> Array[String]:
 	_load_puzzle(i)
 	grace_left = 0.0
 	flowing = true
-	for c in solution:
-		_set_mark(c, PIPE)
+	_lay_solution()
 	solved = false                 # ignore the exact-match win; test the water
 	var guard := 0
 	while not solved and not lost and guard < 20000:
@@ -188,40 +376,62 @@ func _flow_test(i: int) -> Array[String]:
 		guard += 1
 	if not lost:
 		errs.append("water never burst with no pipe laid")
+	elif burst_leak:
+		errs.append("an empty board was called a leak")
 
-	# 3. a wrong cell touching the inlet -- the water should find the leak
+	# 3. the water routed into pipe that is not on the route -- a leak
 	_load_puzzle(i)
 	grace_left = 0.0
 	flowing = true
-	var wrong := Vector2i(-1, -1)
-	for d in DIRS:
-		var n: Vector2i = inlet + d
-		if _in_grid(n) and not solution.has(n):
-			wrong = n
+	_lay_solution()
+	var diverted := false
+	for k in range(1, sol_walk.size() - 1):
+		var c: Vector2i = sol_walk[k]
+		if _is_given(c) or int(solution[c]) == MASK_CROSS:
+			continue
+		var entry := _opp_bit(_bit_of_dir(c - sol_walk[k - 1]))
+		for b in BITS:
+			if b == entry or (int(solution[c]) & b) != 0:
+				continue
+			var n: Vector2i = c + _dir_of_bit(b)
+			if not _in_grid(n) or solution.has(n) or _is_given(n):
+				continue
+			# elbow the route out of the real pipe and into a wrong cell
+			_set_piece(c, entry | b)
+			_set_piece(n, _opp_bit(b))
+			diverted = true
 			break
-	if wrong.x >= 0:
-		_set_mark(wrong, PIPE)
-		_flow_step(step)
+		if diverted:
+			break
+	_retrace()
+	if not diverted:
+		errs.append("could not build a leak to test")
+	else:
+		solved = false
+		guard = 0
+		while not lost and guard < 20000:
+			_flow_step(step)
+			guard += 1
 		if not lost:
-			errs.append("water ignored a leak at " + str(wrong))
-		elif burst_cell != wrong:
-			errs.append("burst reported at " + str(burst_cell)
-					+ " not " + str(wrong))
+			errs.append("water ignored pipe that was not on the route")
+		elif not burst_leak:
+			errs.append("a leak was reported as pressure")
 
 	# 4. dropping to Zen must not hand back a fresh clock
 	_load_puzzle(i)
 	grace_left = 0.0
 	flowing = true
-	for k in mini(6, sol_path.size()):
-		_set_mark(sol_path[k], PIPE)
+	for k in range(1, mini(6, sol_walk.size())):
+		_set_piece(sol_walk[k], int(solution[sol_walk[k]]))
+	_retrace()
 	for _n in 8:
 		_flow_step(step)
 	var pos_before := flow_pos
-	var laid_before := _laid_prefix()
+	var route_before := route.size()
 	_do_action("mode")
 	if mode != MODE_ZEN or not zen_locked:
 		errs.append("Flow did not drop to Zen")
-	if _laid_prefix() != laid_before:
+	if route.size() != route_before:
 		errs.append("dropping to Zen disturbed the board")
 	_flow_step(step)
 	if not is_equal_approx(flow_pos, pos_before):
@@ -237,44 +447,119 @@ func _flow_test(i: int) -> Array[String]:
 	return errs
 
 
+func _fitting_test() -> Array[String]:
+	## The fittings are the new deduction, so check the rules they must obey:
+	## every joint mutual, no dead ends but the taps, a cross only where the
+	## route really crosses, and the fill alone must not give the game away.
+	var errs: Array[String] = []
+	for c in solution:
+		var m := int(solution[c])
+		var n := _pop(m)
+		if not (n == 1 or n == 2 or n == 4):
+			errs.append("illegal fitting at " + str(c))
+		if n == 1 and c != inlet and c != outlet:
+			errs.append("dead end at " + str(c))
+		for b in BITS:
+			if (m & b) == 0:
+				continue
+			var nb: Vector2i = c + _dir_of_bit(b)
+			if not solution.has(nb) or (int(solution[nb]) & _opp_bit(b)) == 0:
+				errs.append("one-sided joint at " + str(c))
+	if _pop(int(solution.get(inlet, 0))) != 1:
+		errs.append("inlet is not an end")
+	if _pop(int(solution.get(outlet, 0))) != 1:
+		errs.append("outlet is not an end")
+
+	var crosses := 0
+	for c in solution:
+		if int(solution[c]) == MASK_CROSS:
+			crosses += 1
+	if crosses != sol_crosses:
+		errs.append("crossing count disagrees with the fittings")
+	if sol_walk.size() != solution.size() + sol_crosses:
+		errs.append("route visits " + str(sol_walk.size()) + " cells, expected "
+				+ str(solution.size() + sol_crosses))
+
+	# The old rule was "a cell joins onto all of its filled neighbours", which
+	# made the fill the whole puzzle. Lay that and it must NOT solve -- unless
+	# this puzzle happens to force every fitting anyway, in which case it must.
+	var every_piece_forced := true
+	for c in solution:
+		if _is_given(c):
+			continue
+		if _pop(int(solution[c])) != _filled_neighbours(c):
+			every_piece_forced = false
+			break
+	for c in solution:
+		var m := 0
+		for i in 4:
+			if solution.has(c + DIRS[i]):
+				m |= BITS[i]
+		_set_piece(c, m)
+	_check_solved()
+	if solved != every_piece_forced:
+		if solved:
+			errs.append("the old adjacency rule still solves it")
+		else:
+			errs.append("forced fittings did not register as solved")
+	return errs
+
+
+func _filled_neighbours(c: Vector2i) -> int:
+	var n := 0
+	for d in DIRS:
+		if solution.has(c + d):
+			n += 1
+	return n
+
+
 func _logic_test() -> void:
 	## Play every puzzle through the same calls the mouse uses. The screenshot
-	## path writes `marks` directly, so it cannot catch anything _set_mark gets
-	## wrong -- which is how the unlaid-taps bug survived a visual check.
+	## path can only show what is drawn, so it cannot catch anything the real
+	## editing path gets wrong -- which is how the unlaid-taps bug survived a
+	## visual check.
 	var fails := 0
+	var loose := 0
 	for i in puzzles.size():
 		_load_puzzle(i)
 		var pname: String = str(puzzles[index].get("name", "?"))
 		var errs: Array[String] = []
 
 		# the taps have to be real pipe in the grid, not just drawn on top
-		if _mark_at(inlet) != PIPE:
-			errs.append("inlet not laid as pipe")
-		if _mark_at(outlet) != PIPE:
-			errs.append("outlet not laid as pipe")
+		if _mark_at(inlet) != PIPE or _piece_at(inlet) != int(solution[inlet]):
+			errs.append("inlet not laid as a real end")
+		if _mark_at(outlet) != PIPE or _piece_at(outlet) != int(solution[outlet]):
+			errs.append("outlet not laid as a real end")
 
-		# lay the pipe the way a player does, through _set_mark
-		for c in solution:
-			_set_mark(c, PIPE)
+		errs.append_array(_fitting_test())
+
+		# lay it the way a player does, through _set_piece
+		_load_puzzle(i)
+		_lay_solution()
 		_check_solved()
 		if not solved:
 			errs.append("never registers as solved")
+		if route != sol_walk:
+			errs.append("the laid pipework traces " + str(route.size())
+					+ " cells, the route is " + str(sol_walk.size()))
+		if route_fault != -1:
+			errs.append("the real route reads as faulty")
 
-		# each tap must end up joined to exactly one neighbour
-		for tap in [inlet, outlet]:
-			var n := _connections(tap).size()
-			if n != 1:
-				errs.append("tap " + str(tap) + " has " + str(n) + " connections")
-
-		# and the pipe has to read as one unbroken run of the right length
-		if sol_path.size() != solution.size():
-			errs.append("pipe traces " + str(sol_path.size()) + " of "
-					+ str(solution.size()) + " cells")
+		# how many cells the fill alone gives away, for information: a puzzle
+		# where every fitting is forced by the fill is a nonogram, not this
+		var forced := 0
+		for c in solution:
+			if _pop(int(solution[c])) == _filled_neighbours(c):
+				forced += 1
+		if forced == solution.size():
+			loose += 1
 
 		errs.append_array(_flow_test(i))
 
 		if errs.is_empty():
-			print("  " + pname + ": OK")
+			print("  " + pname + ": OK  (" + str(solution.size()) + " cells, "
+					+ str(sol_crosses) + " crossing(s), "
+					+ str(solution.size() - forced) + " fittings not forced by the fill)")
 		else:
 			fails += 1
 			print("  " + pname + ": FAIL -- " + ", ".join(errs))
@@ -282,6 +567,8 @@ func _logic_test() -> void:
 	print("")
 	print(str(puzzles.size() - fails) + "/" + str(puzzles.size())
 			+ " puzzles playable from inlet to outlet")
+	if loose > 0:
+		print(str(loose) + " puzzle(s) have every fitting forced by the fill")
 	get_tree().quit(1 if fails > 0 else 0)
 
 
@@ -299,10 +586,19 @@ func _parse_args() -> void:
 				shot_solve = true
 			"--logictest":
 				logic_test = true
+			"--layoutaudit":
+				layout_audit = true
 			"--flow":
 				shot_flow = true
+			"--pressure":
+				shot_press = true
+			"--radial":
+				shot_radial = true
 			"--zen":
 				mode = MODE_ZEN
+			"--layout":
+				if i + 1 < args.size():
+					layout = int(args[i + 1])
 
 
 func _load_puzzles() -> void:
@@ -313,6 +609,15 @@ func _load_puzzles() -> void:
 	f.close()
 	if typeof(parsed) == TYPE_DICTIONARY and parsed.has("puzzles"):
 		puzzles = parsed["puzzles"]
+	# The fittings live in "pieces" and the route in "path". A file written by
+	# the old fill-only generator has neither, and loading it would crash on
+	# the first puzzle rather than say why.
+	if not puzzles.is_empty():
+		var first: Dictionary = puzzles[0]
+		if not (first.has("pieces") and first.has("path")):
+			push_error("data/puzzles.json is from the old fill-only generator. "
+					+ "Run: heavy python3 tools/generate.py")
+			puzzles = []
 
 
 func _load_puzzle(i: int) -> void:
@@ -325,28 +630,36 @@ func _load_puzzle(i: int) -> void:
 	col_clues = p["col_clues"]
 	inlet = Vector2i(int(p["inlet"][1]), int(p["inlet"][0]))    # json is [row, col]
 	outlet = Vector2i(int(p["outlet"][1]), int(p["outlet"][0]))
+	sol_crosses = int(p.get("crosses", 0))
 
 	solution.clear()
-	var rows: Array = p["solution"]
+	var rows: Array = p["pieces"]
 	for y in H:
 		var line: String = rows[y]
 		for x in W:
-			if line[x] == "1":
-				solution[Vector2i(x, y)] = true
+			var m := line.substr(x, 1).hex_to_int()
+			if m != 0:
+				solution[Vector2i(x, y)] = m
 
-	sol_path = _trace_solution()
+	sol_walk.clear()
+	for e in p["path"]:
+		sol_walk.append(Vector2i(int(e[1]), int(e[0])))
 
 	marks = []
+	pieces = []
 	for y in H:
 		var row := []
 		row.resize(W)
 		row.fill(UNKNOWN)
 		marks.append(row)
+		var prow := []
+		prow.resize(W)
+		prow.fill(MASK_NONE)
+		pieces.append(prow)
 
 	undo_stack.clear()
 	hint_cells.clear()
 	solved = false
-	water = 0.0
 	elapsed = 0.0
 
 	lost = false
@@ -354,57 +667,114 @@ func _load_puzzle(i: int) -> void:
 	flowing = false
 	flow_pos = 0.0
 	burst_cell = Vector2i(-1, -1)
+	burst_leak = false
 	pressure_left = PRESSURE_SECONDS
-	grace_left = GRACE_BASE + GRACE_PER_CELL * float(sol_path.size())
+	grace_left = GRACE_BASE + GRACE_PER_CELL * float(sol_walk.size())
 	flow_spc = FLOW_SPC
 
-	# the inlet and outlet are given -- they are the taps you can see
-	# Written straight in: _set_mark refuses cells that _is_given() covers, and
-	# that includes the taps. Going through it here left them unlaid, so nothing
-	# could ever join onto them and no puzzle could be completed.
+	# The inlet and the outlet are given, fitting and all -- they are the taps
+	# you can see. Written straight in: _set_piece refuses cells _is_given()
+	# covers, and that includes the taps. Going through it here left them
+	# unlaid, so nothing could ever join onto them.
 	marks[inlet.y][inlet.x] = PIPE
+	pieces[inlet.y][inlet.x] = int(solution[inlet])
 	marks[outlet.y][outlet.x] = PIPE
+	pieces[outlet.y][outlet.x] = int(solution[outlet])
 
+	_retrace()
 	_layout()
 	queue_redraw()
 
 
-func _trace_solution() -> Array:
-	## Walk the solution from the inlet to get the pipe in order.
-	var out := [inlet]
-	var seen := {inlet: true}
-	var cur := inlet
-	while true:
-		var nxt := Vector2i(-1, -1)
-		for d in DIRS:
-			var n: Vector2i = cur + d
-			if solution.has(n) and not seen.has(n):
-				nxt = n
-				break
-		if nxt.x < 0:
-			break
-		seen[nxt] = true
-		out.append(nxt)
-		cur = nxt
-	return out
+func _lay(key: String, dflt: Variant) -> Variant:
+	return L.get(key, dflt)
+
+
+func _chrome() -> int:
+	return int(_lay("chrome", CHROME_ROWS))
+
+
+func _input_mode() -> int:
+	return int(_lay("input", IN_PALETTE))
+
+
+func _apply_layout() -> void:
+	## Turn the chosen variant into the handful of numbers the rest of the
+	## drawing works from. Nothing below here knows a layout's name.
+	layout = wrapi(layout, 0, LAYOUTS.size())
+	L = LAYOUTS[layout]
+
+	if bool(_lay("land", false)):
+		VW = 1080.0
+		VH = 760.0
+	else:
+		VW = 760.0
+		VH = 1080.0
+	var win := get_window()
+	if win != null:
+		win.content_scale_size = Vector2i(int(VW), int(VH))
+
+	match int(_lay("hdr", HDR_FULL)):
+		HDR_TIGHT: head_h = 124.0
+		HDR_CHIP: head_h = 58.0
+		_: head_h = 208.0
+
+	side_w = 0.0
+	banner_gap = 0.0 if bool(_lay("grow", false)) else 90.0
+	match _chrome():
+		CHROME_PANEL: ctrl_h = 182.0
+		CHROME_BAR:
+			ctrl_h = 66.0
+			banner_gap = 0.0
+		CHROME_PAD:
+			ctrl_h = 240.0
+			banner_gap = 0.0
+		CHROME_NONE: ctrl_h = 92.0
+		CHROME_SIDE:
+			# 54 of these are the tip and rule lines at the foot of the screen.
+			# Declaring 0 let the board run to the very edge and the text then
+			# landed on its bottom row.
+			ctrl_h = 54.0
+			side_w = 172.0
+			banner_gap = 0.0
+		CHROME_TRAY: ctrl_h = 174.0
+		_: ctrl_h = 176.0
+
+	bar_open = false
+	radial_cell = Vector2i(-1, -1)
+	press_cell = Vector2i(-1, -1)
+	if W > 0:
+		_layout()
+	queue_redraw()
+
+
+func _banner_rect() -> Rect2:
+	## One formula for every layout. Where the board has eaten the strip, the
+	## banner simply lands on top of the board instead.
+	return Rect2(20.0, VH - ctrl_h - 90.0, VW - 40.0, 80.0)
 
 
 func _layout() -> void:
-	var avail_w := VW - 40.0
-	# board bottom lands at 196 + avail_h, which must stay clear of the banner
-	var avail_h := 620.0
+	var avail_w := VW - 40.0 - side_w * 2.0
+	var top := head_h
+	var avail_h := (VH - ctrl_h - banner_gap) - top
+	var rails: bool = bool(_lay("rails", false))
 
 	# The gutters have to hold the longest clue in either direction, so size
 	# the cells and the gutters together: two passes settle it.
 	gutter_l = 86.0
 	gutter_t = 86.0
+	gutter_r = 86.0 if rails else 0.0
+	gutter_b = 86.0 if rails else 0.0
 	if font == null:          # headless logic runs have no font to measure
-		cell = min((avail_w - gutter_l) / float(W), (avail_h - gutter_t) / float(H))
-		origin = Vector2((VW - (cell * W + gutter_l)) * 0.5 + gutter_l, 196.0 + gutter_t)
+		cell = min((avail_w - gutter_l - gutter_r) / float(W),
+				(avail_h - gutter_t - gutter_b) / float(H))
+		origin = Vector2(20.0 + side_w + gutter_l, top + gutter_t)
 		gutter = gutter_l
 		return
 	for _pass in 2:
-		cell = min((avail_w - gutter_l) / float(W), (avail_h - gutter_t) / float(H))
+		cell = min((avail_w - gutter_l - gutter_r) / float(W),
+				(avail_h - gutter_t - gutter_b) / float(H))
 		cell = min(cell, 104.0)
 		clue_font = int(clampf(cell * 0.33, 13.0, 25.0))
 
@@ -425,14 +795,19 @@ func _layout() -> void:
 
 		gutter_l = clampf(widest + 26.0, 54.0, 150.0)
 		gutter_t = clampf(14.0 + tallest * (clue_font + 3.0) + 8.0, 54.0, 150.0)
+		gutter_r = gutter_l if rails else 0.0
+		gutter_b = gutter_t if rails else 0.0
 
 	var board_w := cell * W
-	origin = Vector2((VW - (board_w + gutter_l)) * 0.5 + gutter_l, 196.0 + gutter_t)
+	var board_h := cell * H
+	origin = Vector2(
+			20.0 + side_w + (avail_w - (board_w + gutter_l + gutter_r)) * 0.5 + gutter_l,
+			top + (avail_h - (board_h + gutter_t + gutter_b)) * 0.5 + gutter_t)
 	gutter = gutter_l
 
 
 # =========================================================================
-#  marks
+#  the board
 # =========================================================================
 
 func _in_grid(c: Vector2i) -> bool:
@@ -445,24 +820,45 @@ func _mark_at(c: Vector2i) -> int:
 	return marks[c.y][c.x]
 
 
-func _other_mark(m: int) -> int:
-	return BLOCKED if m == PIPE else PIPE
+func _piece_at(c: Vector2i) -> int:
+	if not _in_grid(c):
+		return MASK_NONE
+	return pieces[c.y][c.x]
 
 
 func _is_given(c: Vector2i) -> bool:
 	return c == inlet or c == outlet or hint_cells.has(c)
 
 
-func _set_mark(c: Vector2i, v: int, record := true) -> void:
+func _record(c: Vector2i) -> void:
+	undo_stack.push_back([c, marks[c.y][c.x], pieces[c.y][c.x]])
+	if undo_stack.size() > 600:
+		undo_stack.pop_front()
+
+
+func _set_fill(c: Vector2i, v: int, record := true) -> void:
+	## Lay or clear plain pipe. Clearing takes the fitting with it.
 	if not _in_grid(c) or _is_given(c):
 		return
-	if marks[c.y][c.x] == v:
+	var keep: int = pieces[c.y][c.x] if v == PIPE else MASK_NONE
+	if marks[c.y][c.x] == v and pieces[c.y][c.x] == keep:
 		return
 	if record:
-		undo_stack.push_back([c, marks[c.y][c.x]])
-		if undo_stack.size() > 600:
-			undo_stack.pop_front()
+		_record(c)
 	marks[c.y][c.x] = v
+	pieces[c.y][c.x] = keep
+
+
+func _set_piece(c: Vector2i, m: int, record := true) -> void:
+	## Lay a fitting. A cell with a fitting is pipe by definition.
+	if not _in_grid(c) or _is_given(c):
+		return
+	if marks[c.y][c.x] == PIPE and pieces[c.y][c.x] == m:
+		return
+	if record:
+		_record(c)
+	marks[c.y][c.x] = PIPE
+	pieces[c.y][c.x] = m
 
 
 func _undo() -> void:
@@ -471,15 +867,8 @@ func _undo() -> void:
 	var e: Array = undo_stack.pop_back()
 	var c: Vector2i = e[0]
 	marks[c.y][c.x] = e[1]
-	queue_redraw()
-
-
-func _connections(c: Vector2i) -> Array:
-	var out := []
-	for d in DIRS:
-		if _mark_at(c + d) == PIPE:
-			out.append(d)
-	return out
+	pieces[c.y][c.x] = e[2]
+	_after_change()
 
 
 # =========================================================================
@@ -524,48 +913,74 @@ func _clue_done(clue: Array, bits: Array) -> bool:
 	return true
 
 
-# =========================================================================
-#  flow mode
-# =========================================================================
-
-func _laid_prefix() -> int:
-	## How many cells of the real route, from the inlet, are laid as pipe.
-	## The water can travel exactly this far and no further.
+func _crosses_laid() -> int:
 	var n := 0
-	for c in sol_path:
-		if _mark_at(c) == PIPE:
-			n += 1
-		else:
-			break
+	for y in H:
+		for x in W:
+			if marks[y][x] == PIPE and pieces[y][x] == MASK_CROSS:
+				n += 1
 	return n
 
 
-func _find_leak(upto: int) -> Vector2i:
-	## Pipe hanging off the wetted line that is not part of the route. Correct
-	## pipe can never do this -- the route never runs alongside itself -- so
-	## anything found here is a mistake the water has just reached.
-	for i in range(mini(upto + 1, sol_path.size())):
-		var c: Vector2i = sol_path[i]
-		for d in DIRS:
-			var n: Vector2i = c + d
-			if _mark_at(n) != PIPE:
-				continue
-			if i > 0 and n == sol_path[i - 1]:
-				continue
-			if i + 1 < sol_path.size() and n == sol_path[i + 1]:
-				continue
-			return n
-	return Vector2i(-1, -1)
+# =========================================================================
+#  the water's route
+# =========================================================================
+
+func _trace_player() -> Array:
+	## Follow the water out of the inlet, through the fittings the player has
+	## actually laid, until the pipework stops carrying it. A cross appears
+	## twice, once per pass, exactly as the real route does.
+	var out: Array = [inlet]
+	var m := _piece_at(inlet)
+	if m == MASK_NONE:
+		return out
+	var d := _dir_of_bit(m & -m)
+	if d == Vector2i.ZERO:
+		return out
+	var guard := W * H * 2 + 8
+	while guard > 0:
+		guard -= 1
+		var cur: Vector2i = out[out.size() - 1]
+		var n: Vector2i = cur + d
+		if _mark_at(n) != PIPE:
+			break
+		var nm := _piece_at(n)
+		var entry := _opp_bit(_bit_of_dir(d))
+		if (nm & entry) == 0:
+			break                  # nothing on that side to join onto
+		out.append(n)
+		var pc := _pop(nm)
+		if pc == 4:
+			pass                   # a cross: straight on through
+		elif pc == 2:
+			d = _dir_of_bit(nm & ~entry)
+		else:
+			break                  # an end -- the outlet, or a blanked stub
+	return out
 
 
-func _burst(c: Vector2i) -> void:
+func _retrace() -> void:
+	route = _trace_player()
+	route_fault = -1
+	for i in route.size():
+		if i >= sol_walk.size() or route[i] != sol_walk[i]:
+			route_fault = i
+			break
+
+
+func _route_complete() -> bool:
+	return route_fault == -1 and route.size() == sol_walk.size()
+
+
+func _burst(c: Vector2i, leak: bool) -> void:
 	lost = true
 	burst_cell = c
+	burst_leak = leak
 	queue_redraw()
 
 
 func _flow_step(delta: float) -> void:
-	if mode != MODE_FLOW or solved or lost or sol_path.is_empty():
+	if mode != MODE_FLOW or solved or lost or sol_walk.is_empty():
 		return
 
 	if grace_left > 0.0:
@@ -574,47 +989,46 @@ func _flow_step(delta: float) -> void:
 			return
 		flowing = true
 
-	# a wrong joint on the stretch the water has already reached
-	var leak := _find_leak(int(flow_pos))
-	if leak.x >= 0:
-		_burst(leak)
+	# The water can run to the end of the pipework it has, but no further than
+	# the first cell the real route never went through -- that is the leak.
+	var last := float(route.size() - 1)
+	var limit := last if route_fault < 0 else float(route_fault)
+
+	if flow_pos < limit:
+		flow_pos = minf(flow_pos + delta / flow_spc, limit)
+		pressure_left = PRESSURE_SECONDS
+
+	if route_fault >= 0 and flow_pos >= limit - 0.0001:
+		_burst(route[route_fault], true)
 		return
 
-	var laid := _laid_prefix()
-	var target := float(laid - 1)
-	var last := float(sol_path.size() - 1)
-
-	if flow_pos < target:
-		flow_pos = minf(flow_pos + delta / flow_spc, target)
-		pressure_left = PRESSURE_SECONDS
-		if flow_pos >= last:
+	if flow_pos >= last - 0.0001:
+		if _route_complete():
 			solved = true
-	else:
+			return
 		# caught up with the plumbing -- the pressure starts to tell
 		pressure_left -= delta
 		if pressure_left <= 0.0:
-			_burst(sol_path[mini(laid, sol_path.size() - 1)])
-			return
-
-	water = flow_pos / maxf(last, 1.0)
+			_burst(route[route.size() - 1], false)
 
 
 func _check_solved() -> void:
-	## The generator guarantees one solution, so matching the pipe set is
-	## exactly equivalent to satisfying every clue and the pipe rule.
+	## Every pipe cell laid, and every fitting on it right. The generator
+	## guarantees one solution, so this is exactly "clues satisfied and the
+	## pipework joins the inlet to the outlet".
 	var count := 0
 	for y in H:
 		for x in W:
-			if marks[y][x] == PIPE:
-				count += 1
-				if not solution.has(Vector2i(x, y)):
-					return
+			if marks[y][x] != PIPE:
+				continue
+			count += 1
+			var c := Vector2i(x, y)
+			if not solution.has(c) or pieces[y][x] != int(solution[c]):
+				return
 	if count == solution.size():
 		solved = true
-		# In flow mode the water is already part way along; restarting it at
-		# the inlet would look like a glitch.
 		if mode == MODE_ZEN:
-			water = 0.0
+			flow_pos = 0.0
 
 
 # =========================================================================
@@ -629,20 +1043,153 @@ func _cell_from_point(p: Vector2) -> Vector2i:
 	return c if _in_grid(c) else Vector2i(-1, -1)
 
 
+func _cycle_states(c: Vector2i) -> Array:
+	## Only the states YOUR OWN marks allow. It reads your marks and never the
+	## solution, so it leaks nothing -- and the list stays short enough that
+	## cycling really is fewer taps than a palette.
+	var out: Array = [[UNKNOWN, MASK_NONE], [BLOCKED, MASK_NONE], [PIPE, MASK_NONE]]
+	var nb := 0
+	for i in 4:
+		if _mark_at(c + DIRS[i]) == PIPE:
+			nb |= BITS[i]
+	for m in STRAIGHTS:
+		if (int(m) & nb) == int(m):
+			out.append([PIPE, int(m)])
+	for m in ELBOWS:
+		if (int(m) & nb) == int(m):
+			out.append([PIPE, int(m)])
+	if nb == MASK_CROSS:
+		out.append([PIPE, MASK_CROSS])
+	return out
+
+
+func _cycle_cell(c: Vector2i, by: int) -> void:
+	if _is_given(c):
+		return
+	var states := _cycle_states(c)
+	var at := -1
+	for i in states.size():
+		if int(states[i][0]) == _mark_at(c) and int(states[i][1]) == _piece_at(c):
+			at = i
+			break
+	var nxt: Array = states[posmod(at + by, states.size())] if at >= 0 else states[2]
+	if int(nxt[1]) == MASK_NONE:
+		_set_fill(c, int(nxt[0]))
+	else:
+		_set_piece(c, int(nxt[1]))
+
+
+func _quick_mark(c: Vector2i) -> void:
+	match _mark_at(c):
+		UNKNOWN: _set_fill(c, PIPE)
+		PIPE: _set_fill(c, BLOCKED)
+		_: _set_fill(c, UNKNOWN)
+
+
+func _handle_rect(c: Vector2i) -> Rect2:
+	return Rect2(origin + Vector2(float(c.x) * cell + cell * 0.62,
+			float(c.y) * cell), Vector2(cell * 0.38, cell * 0.38))
+
+
+func _drag_through(prev: Vector2i, c: Vector2i) -> void:
+	## The stroke leaves `prev` for `c`, which pins prev's fitting: we now know
+	## the side it came in by and the side it goes out by. Drag down then left
+	## and you get that elbow, without a gesture that could be mistaken for
+	## anything else -- it IS the painting stroke.
+	var out_bit := _bit_of_dir(c - prev)
+	var in_bit := int(drag_entry.get(prev, 0))
+	if in_bit != 0 and in_bit != out_bit:
+		_set_piece(prev, in_bit | out_bit)
+	else:
+		_set_fill(prev, PIPE)
+	drag_entry[c] = _opp_bit(out_bit)
+	_set_fill(c, PIPE)
+
+
+func _press_cell(c: Vector2i, secondary: bool, at: Vector2) -> void:
+	var im := _input_mode()
+
+	if im == IN_RADIAL:
+		# arm the hold; a quick tap just marks the cell instead
+		press_cell = c
+		press_at = 0.0
+		drag_fill = -2
+		return
+
+	if im == IN_CYCLE:
+		_cycle_cell(c, -1 if secondary else 1)
+		drag_fill = -2
+		return
+
+	if im == IN_HANDLE and _mark_at(c) == PIPE and _handle_rect(c).has_point(at) \
+			and _mask_kind(_piece_at(c)) >= 0:
+		var turned := _rotate_mask(_piece_at(c), -1 if secondary else 1)
+		_remember_rotation(turned)
+		_set_piece(c, turned)
+		drag_fill = -2
+		return
+
+	if im == IN_DRAG:
+		drag_entry.clear()
+
+	if tool == TOOL_PIPE or tool == TOOL_EMPTY:
+		var want: int = PIPE if tool == TOOL_PIPE else BLOCKED
+		if secondary:
+			want = BLOCKED if want == PIPE else PIPE
+		if _is_given(c):
+			drag_fill = want
+		else:
+			# pressing a cell that already has this mark rubs it out
+			drag_fill = UNKNOWN if marks[c.y][c.x] == want else want
+		_set_fill(c, drag_fill)
+		return
+
+	# a fitting tool: lay it, or rotate what is already there
+	var cur := _piece_at(c)
+	if _mark_at(c) == PIPE and _mask_kind(cur) == tool:
+		var turned := _rotate_mask(cur, -1 if secondary else 1)
+		_remember_rotation(turned)
+		_set_piece(c, turned)
+	else:
+		_set_piece(c, _tool_mask(tool))
+	drag_fill = -1                     # a drag goes on laying this fitting
+
+
+func _remember_rotation(m: int) -> void:
+	var k := _mask_kind(m)
+	if k == TOOL_STRAIGHT:
+		rot_straight = STRAIGHTS.find(m)
+	elif k == TOOL_ELBOW:
+		rot_elbow = ELBOWS.find(m)
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		mouse = get_global_mouse_position()
+		if radial_cell.x >= 0:
+			var pick := _radial_slot_at(mouse)
+			if pick != radial_pick:
+				radial_pick = pick
+				queue_redraw()
+			return
 		var c := _cell_from_point(mouse)
 		if c != hover:
 			hover = c
 			queue_redraw()
+		if press_cell.x >= 0 and c != press_cell:
+			press_cell = Vector2i(-1, -1)      # moved: not a hold any more
 		if dragging and _in_grid(c) and not painted.has(c):
 			painted[c] = true
-			_set_mark(c, drag_to)
+			if _input_mode() == IN_DRAG and last_painted.x >= 0 \
+					and (c - last_painted).length_squared() == 1:
+				_drag_through(last_painted, c)
+			elif drag_fill == -1:
+				_set_piece(c, _tool_mask(tool))
+			elif drag_fill >= 0:
+				_set_fill(c, drag_fill)
+			last_painted = c
 			_after_change()
-		elif dragging:
-			pass
-		else:
+		elif not dragging:
 			for b in buttons:
 				if (b["rect"] as Rect2).has_point(mouse):
 					queue_redraw()
@@ -651,6 +1198,22 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton:
 		mouse = get_global_mouse_position()
 		var mb := event as InputEventMouseButton
+		if picking:
+			# the picker owns the screen while it is open
+			if mb.pressed:
+				for b in buttons:
+					if (b["rect"] as Rect2).has_point(mouse):
+						_do_action(b["action"])
+						return
+				picking = false
+				queue_redraw()
+			return
+		if radial_cell.x >= 0:
+			if not mb.pressed:
+				_apply_radial()
+				dragging = false
+				painted.clear()
+			return
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
 			for b in buttons:
 				if (b["rect"] as Rect2).has_point(mouse):
@@ -667,48 +1230,88 @@ func _unhandled_input(event: InputEvent) -> void:
 
 		var c := _cell_from_point(mouse)
 		if mb.pressed and _in_grid(c):
-			var cur: int = marks[c.y][c.x]
 			var left := mb.button_index == MOUSE_BUTTON_LEFT
 			if not left and mb.button_index != MOUSE_BUTTON_RIGHT:
 				return
-			var want: int = paint_mode if left else _other_mark(paint_mode)
-			if _is_given(c):
-				# A tap is fixed pipe, so taking its mark as the drag mode would
-				# turn the gesture into an eraser. Starting a drag at the inlet
-				# is how you naturally begin, so make it paint outwards.
-				drag_to = want
-			else:
-				# dragging off a cell that already has this mark rubs it out
-				drag_to = UNKNOWN if cur == want else want
+			_press_cell(c, not left, mouse)
 			dragging = true
 			painted = {c: true}
-			_set_mark(c, drag_to)
+			last_painted = c
 			_after_change()
 		elif not mb.pressed:
+			if press_cell.x >= 0 and _input_mode() == IN_RADIAL:
+				_quick_mark(press_cell)      # a hold would have opened the ring
+				_after_change()
 			dragging = false
 			painted.clear()
+			press_cell = Vector2i(-1, -1)
+			last_painted = Vector2i(-1, -1)
 
 	elif event is InputEventKey and event.pressed and not event.echo:
 		match (event as InputEventKey).keycode:
+			KEY_1: _do_action("tool_pipe")
+			KEY_2: _do_action("tool_empty")
+			KEY_3: _do_action("tool_straight")
+			KEY_4: _do_action("tool_elbow")
+			KEY_5: _do_action("tool_cross")
+			KEY_Q: _do_action("rotate")
+			KEY_L: _do_action("layouts")
+			KEY_BRACKETLEFT:
+				layout -= 1
+				_apply_layout()
+			KEY_BRACKETRIGHT:
+				layout += 1
+				_apply_layout()
 			KEY_R: _do_action("reset")
 			KEY_N, KEY_RIGHT: _do_action("next")
 			KEY_P, KEY_LEFT: _do_action("prev")
 			KEY_H: _do_action("hint")
 			KEY_M: _do_action("errors")
 			KEY_F: _do_action("mode")
-			KEY_SPACE, KEY_TAB: _do_action("tap")
+			KEY_SPACE, KEY_TAB: _do_action("cycle")
 			KEY_Z: _undo()
 			KEY_ESCAPE: get_tree().quit()
 
 
 func _after_change() -> void:
+	_retrace()
 	if not solved:
 		_check_solved()
 	queue_redraw()
 
 
+func _apply_radial() -> void:
+	var c := radial_cell
+	var pick := radial_pick
+	radial_cell = Vector2i(-1, -1)
+	radial_pick = -2
+	press_cell = Vector2i(-1, -1)
+	if pick < 0 or pick > 7:
+		queue_redraw()
+		return
+	var m: int = RADIAL_SLOTS[pick]
+	if m < 0:
+		_set_fill(c, UNKNOWN)
+	else:
+		_remember_rotation(m)
+		_set_piece(c, m)
+	_after_change()
+
+
 func _do_action(a: String) -> void:
+	if a.begins_with("pick_"):
+		layout = int(a.substr(5))
+		picking = false
+		_apply_layout()
+		return
 	match a:
+		"layouts":
+			picking = not picking
+			queue_redraw()
+		"bar":
+			bar_open = not bar_open
+			queue_redraw()
+		"undo": _undo()
 		"prev": _load_puzzle(index - 1)
 		"next": _load_puzzle(index + 1)
 		"reset": _load_puzzle(index)
@@ -726,7 +1329,6 @@ func _do_action(a: String) -> void:
 				mode = MODE_ZEN
 				zen_locked = true
 				flowing = false
-				water = 0.0
 				queue_redraw()
 			elif not zen_locked:
 				# opting into the chase part way through: keep the board, start
@@ -734,37 +1336,74 @@ func _do_action(a: String) -> void:
 				mode = MODE_FLOW
 				flowing = false
 				flow_pos = 0.0
-				water = 0.0
 				pressure_left = PRESSURE_SECONDS
-				grace_left = GRACE_BASE + GRACE_PER_CELL * float(sol_path.size())
+				grace_left = GRACE_BASE + GRACE_PER_CELL * float(sol_walk.size())
 				queue_redraw()
-		"tap":
-			paint_mode = _other_mark(paint_mode)
+		"cycle":
+			tool = (tool + 1) % 5
 			queue_redraw()
+		"rotate":
+			if tool == TOOL_STRAIGHT:
+				rot_straight = (rot_straight + 1) % 2
+			elif tool == TOOL_ELBOW:
+				rot_elbow = (rot_elbow + 1) % 4
+			queue_redraw()
+		"tool_pipe": _pick_tool(TOOL_PIPE)
+		"tool_empty": _pick_tool(TOOL_EMPTY)
+		"tool_straight": _pick_tool(TOOL_STRAIGHT)
+		"tool_elbow": _pick_tool(TOOL_ELBOW)
+		"tool_cross": _pick_tool(TOOL_CROSS)
 		"hint": _give_hint()
+
+
+func _pick_tool(t: int) -> void:
+	# tapping the tool you already hold turns it, so one button both selects
+	# and rotates -- a phone has no right button and no keyboard
+	if tool == t:
+		_do_action("rotate")
+		return
+	tool = t
+	queue_redraw()
 
 
 func _give_hint() -> void:
 	if solved:
 		return
-	## Hand over one cell the player has not got right yet.
+	## Hand over one cell the player has not got right yet: a wrong one first,
+	## then a fitting they have left undecided, then a blank.
 	var wrong := []
+	var unfitted := []
 	var blank := []
 	for y in H:
 		for x in W:
 			var c := Vector2i(x, y)
 			if _is_given(c):
 				continue
-			var want: int = PIPE if solution.has(c) else BLOCKED
+			var want_pipe := solution.has(c)
 			if marks[y][x] == UNKNOWN:
 				blank.append(c)
-			elif marks[y][x] != want:
+			elif (marks[y][x] == PIPE) != want_pipe:
 				wrong.append(c)
-	var pool: Array = wrong if not wrong.is_empty() else blank
+			elif want_pipe and pieces[y][x] != int(solution[c]):
+				if pieces[y][x] == MASK_NONE:
+					unfitted.append(c)
+				else:
+					wrong.append(c)
+	var pool: Array = wrong
+	if pool.is_empty():
+		pool = unfitted
+	if pool.is_empty():
+		pool = blank
 	if pool.is_empty():
 		return
 	var c: Vector2i = pool[randi() % pool.size()]
-	marks[c.y][c.x] = PIPE if solution.has(c) else BLOCKED
+	_record(c)
+	if solution.has(c):
+		marks[c.y][c.x] = PIPE
+		pieces[c.y][c.x] = int(solution[c])
+	else:
+		marks[c.y][c.x] = BLOCKED
+		pieces[c.y][c.x] = MASK_NONE
 	hint_cells[c] = true
 	_after_change()
 
@@ -774,11 +1413,21 @@ func _give_hint() -> void:
 # =========================================================================
 
 func _process(delta: float) -> void:
-	if puzzles.is_empty() or lost:
+	if puzzles.is_empty():
+		return
+	# a press held still on a cell blooms the radial
+	if press_cell.x >= 0 and radial_cell.x < 0 and _input_mode() == IN_RADIAL:
+		press_at += delta
+		if press_at >= 0.26:
+			radial_cell = press_cell
+			radial_pick = -2
+			queue_redraw()
+	if lost:
 		return
 	if solved:
-		if water < 1.0:
-			water = minf(water + delta * 0.55, 1.0)
+		var last := float(maxi(route.size() - 1, 0))
+		if flow_pos < last:
+			flow_pos = minf(flow_pos + delta * 4.0, last)
 			queue_redraw()
 		return
 
@@ -794,10 +1443,15 @@ func _process(delta: float) -> void:
 #  drawing
 # =========================================================================
 
+func _blueprint() -> bool:
+	return _chrome() == CHROME_TRAY
+
+
 func _draw() -> void:
-	draw_rect(Rect2(0, 0, VW, VH), C_BG, true)
+	draw_rect(Rect2(0, 0, VW, VH), C_BENCH if _blueprint() else C_BG, true)
 	if puzzles.is_empty():
-		_text_c("No puzzles. Run: heavy python3 tools/generate.py", Vector2(VW * 0.5, VH * 0.5), 20, C_BAD)
+		_text_c("No puzzles. Run: heavy python3 tools/generate.py",
+				Vector2(VW * 0.5, VH * 0.5), 20, C_BAD)
 		return
 
 	_draw_header()
@@ -806,55 +1460,128 @@ func _draw() -> void:
 	_draw_pipes()
 	if solved or flowing:
 		_draw_water()
+	_draw_overpasses()
 	_draw_flanges()
 	_draw_taps()
+	if bool(_lay("ring", false)):
+		_draw_pressure_ring()
 	if lost:
 		_draw_burst()
-	_draw_footer()
+	_draw_controls()
 	if solved:
 		_draw_banner()
 	elif lost:
 		_draw_lost_banner()
+	if radial_cell.x >= 0:
+		_draw_radial()
+	if picking:
+		_draw_picker()
 
 
 # ---- header --------------------------------------------------------------
 
-func _draw_header() -> void:
+func _status_text() -> String:
 	var p: Dictionary = puzzles[index]
-	_text_c("PIPEGRAM", Vector2(VW * 0.5, 56), 38, C_ACCENT)
-	_text_c("lay the pipe by the numbers", Vector2(VW * 0.5, 84), 17, C_TEXT_DIM)
-
-	var label := "%s  ·  %d×%d  ·  puzzle %d/%d" % [
-		str(p.get("name", "?")), W, H, index + 1, puzzles.size()]
-	_text_c(label, Vector2(VW * 0.5, 128), 19, C_TEXT)
-
 	var mins := int(elapsed) / 60
 	var secs := int(elapsed) % 60
-	var t := "%d:%02d" % [mins, secs]
-	_text_c(t, Vector2(VW * 0.5, 160), 17, C_GOOD if solved else C_TEXT_DIM)
+	return "%s  ·  %d×%d  ·  %d/%d  ·  %d:%02d" % [
+		str(p.get("name", "?")), W, H, index + 1, puzzles.size(), mins, secs]
 
-	# flow status: how long until the water starts, or how close it is behind you
+
+func _cross_text(short := false) -> String:
+	var laid := _crosses_laid()
+	if sol_crosses == 0:
+		return "no crossings" if short else "the route never crosses itself"
+	if short:
+		return "crossings %d/%d" % [laid, sol_crosses]
+	if sol_crosses == 1:
+		return "the route crosses itself once  ·  %d laid" % laid
+	return "the route crosses itself %d times  ·  %d laid" % [sol_crosses, laid]
+
+
+func _cross_colour() -> Color:
+	var laid := _crosses_laid()
+	if laid == sol_crosses:
+		return C_TEXT_DONE
+	if laid > sol_crosses:
+		return C_BAD
+	return C_ACCENT
+
+
+func _flow_ahead() -> float:
+	var reach := float(route.size() - 1)
+	if route_fault >= 0:
+		reach = float(route_fault)
+	return reach - flow_pos
+
+
+func _draw_flow_line(y: float, size := 17) -> void:
+	## Where the water is, or how long you have left. The bar is skipped when
+	## the layout puts the countdown on the board instead.
 	if mode != MODE_FLOW or solved or lost:
 		return
 	if grace_left > 0.0:
-		_text_c("water in %d s" % int(ceil(grace_left)),
-				Vector2(VW * 0.5, 182), 17, C_ACCENT)
+		_text_c("water in %d s" % int(ceil(grace_left)), Vector2(VW * 0.5, y),
+				size, C_ACCENT)
 		return
-
-	var laid := _laid_prefix()
-	var ahead := float(laid - 1) - flow_pos
+	var ahead := _flow_ahead()
 	if ahead > 0.35:
 		_text_c("water rising — %d cells of pipe ahead of it" % int(ahead),
-				Vector2(VW * 0.5, 182), 17, C_WATER)
-	else:
-		# the water has caught up; this is the countdown that kills you
-		var frac := clampf(pressure_left / PRESSURE_SECONDS, 0.0, 1.0)
-		_text_c("PRESSURE BUILDING — %.1f s" % pressure_left,
-				Vector2(VW * 0.5, 182), 18, C_BAD)
-		var bw := 300.0
-		var br := Rect2(VW * 0.5 - bw * 0.5, 190.0, bw, 6.0)
-		draw_rect(br, C_PANEL, true)
-		draw_rect(Rect2(br.position, Vector2(bw * frac, br.size.y)), C_BAD, true)
+				Vector2(VW * 0.5, y), size, C_WATER)
+		return
+	_text_c("PRESSURE BUILDING — %.1f s" % pressure_left, Vector2(VW * 0.5, y),
+			size + 1, C_BAD)
+	if bool(_lay("ring", false)):
+		return                        # the ring on the board carries it
+	var frac := clampf(pressure_left / PRESSURE_SECONDS, 0.0, 1.0)
+	var bw := 300.0
+	var br := Rect2(VW * 0.5 - bw * 0.5, y + 7.0, bw, 6.0)
+	draw_rect(br, C_PANEL, true)
+	draw_rect(Rect2(br.position, Vector2(bw * frac, br.size.y)), C_BAD, true)
+
+
+func _draw_header() -> void:
+	match int(_lay("hdr", HDR_FULL)):
+		HDR_TIGHT:
+			_text_c("PIPEGRAM", Vector2(VW * 0.5, 32), 26, C_ACCENT)
+			_text_c(_status_text(), Vector2(VW * 0.5, 58), 15,
+					C_GOOD if solved else C_TEXT_DIM)
+			_text_c(_cross_text(), Vector2(VW * 0.5, 82), 16, _cross_colour())
+			_draw_flow_line(106)
+		HDR_CHIP:
+			draw_rect(Rect2(0, 0, VW, 46), C_PANEL, true)
+			_text_l("PIPEGRAM", Vector2(20, 30), 18, C_ACCENT)
+			_text_r(_status_text(), Vector2(VW - 20, 16), 14, C_TEXT_DIM)
+			_text_c(_cross_text(true), Vector2(VW * 0.5, 30), 14, _cross_colour())
+			_draw_flow_line(70, 14)
+		_:
+			_text_c("PIPEGRAM", Vector2(VW * 0.5, 50), 36, C_ACCENT)
+			_text_c("lay the pipe by the numbers", Vector2(VW * 0.5, 76), 16,
+					C_TEXT_DIM)
+			_text_c(_status_text(), Vector2(VW * 0.5, 112), 18, C_TEXT)
+			_text_c(_cross_text(), Vector2(VW * 0.5, 140), 17, _cross_colour())
+			var mins := int(elapsed) / 60
+			var secs := int(elapsed) % 60
+			_text_c("%d:%02d" % [mins, secs], Vector2(VW * 0.5, 166), 16,
+					C_GOOD if solved else C_TEXT_DIM)
+			_draw_flow_line(190)
+
+
+func _draw_pressure_ring() -> void:
+	## The Flow countdown drawn round the water's head, so your eyes never
+	## have to leave the frontier to read it.
+	if mode != MODE_FLOW or solved or lost or route.is_empty():
+		return
+	if grace_left > 0.0 or _flow_ahead() > 0.35:
+		return
+	var head: Vector2i = route[clampi(int(round(flow_pos)), 0, route.size() - 1)]
+	var ctr := _cell_centre(head)
+	var frac := clampf(pressure_left / PRESSURE_SECONDS, 0.0, 1.0)
+	var r := cell * 0.47
+	draw_arc(ctr, r, 0.0, TAU, 32, Color(C_BAD.r, C_BAD.g, C_BAD.b, 0.18),
+			maxf(cell * 0.07, 3.0), true)
+	draw_arc(ctr, r, -PI * 0.5, -PI * 0.5 + TAU * frac, 32, C_BAD,
+			maxf(cell * 0.07, 3.0), true)
 
 
 # ---- clues ---------------------------------------------------------------
@@ -865,7 +1592,8 @@ func _draw_clues() -> void:
 
 	# panel behind the clue gutters
 	draw_rect(Rect2(origin.x - gutter_l, origin.y - gutter_t,
-			board_w + gutter_l, board_h + gutter_t), C_PANEL, true)
+			board_w + gutter_l + gutter_r, board_h + gutter_t + gutter_b),
+			C_BP_PANEL if _blueprint() else C_PANEL, true)
 
 	for y in H:
 		var clue: Array = row_clues[y]
@@ -882,6 +1610,9 @@ func _draw_clues() -> void:
 			txt = " ".join(parts)
 		var cy := origin.y + y * cell + cell * 0.5
 		_text_r(txt, Vector2(origin.x - 12.0, cy), clue_font, col)
+		if gutter_r > 0.0:
+			_text_l(txt, Vector2(origin.x + cell * W + 12.0, cy + clue_font * 0.36),
+					clue_font, col)
 
 	for x in W:
 		var clue: Array = col_clues[x]
@@ -896,6 +1627,15 @@ func _draw_clues() -> void:
 			var base := origin.y - 14.0 - (clue.size() - 1) * line_h
 			for i in clue.size():
 				_text_c(str(int(clue[i])), Vector2(cx, base + i * line_h), clue_font, col)
+		if gutter_b > 0.0:
+			var by2 := origin.y + cell * H + 24.0
+			if clue.is_empty():
+				_text_c("0", Vector2(cx, by2), clue_font,
+						C_TEXT_DONE if done else C_TEXT_DIM)
+			else:
+				for i in clue.size():
+					_text_c(str(int(clue[i])),
+							Vector2(cx, by2 + i * (clue_font + 3.0)), clue_font, col)
 
 
 # ---- cells ---------------------------------------------------------------
@@ -906,6 +1646,8 @@ func _draw_cells() -> void:
 			var c := Vector2i(x, y)
 			var r := Rect2(origin.x + x * cell, origin.y + y * cell, cell, cell)
 			var base := C_CELL if (x + y) % 2 == 0 else C_CELL_ALT
+			if _blueprint():
+				base = C_BP_CELL if (x + y) % 2 == 0 else C_BP_ALT
 			if hover == c and not solved:
 				base = base.lightened(0.10)
 			draw_rect(r, base, true)
@@ -919,10 +1661,17 @@ func _draw_cells() -> void:
 				draw_line(a, b, C_BLOCK, wdt, true)
 				draw_line(Vector2(a.x, b.y), Vector2(b.x, a.y), C_BLOCK, wdt, true)
 
-			if show_errors and not solved and m == PIPE and not solution.has(c):
-				draw_rect(r, Color(C_BAD.r, C_BAD.g, C_BAD.b, 0.26), true)
+			if show_errors and not solved and m == PIPE:
+				var bad := not solution.has(c)
+				if not bad and pieces[y][x] != MASK_NONE:
+					bad = pieces[y][x] != int(solution[c])
+				if bad:
+					draw_rect(r, Color(C_BAD.r, C_BAD.g, C_BAD.b, 0.26), true)
 			if hint_cells.has(c):
 				draw_rect(r, Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.14), true)
+			if _input_mode() == IN_HANDLE and m == PIPE and not solved \
+					and _mask_kind(pieces[y][x]) >= 0 and not _is_given(c):
+				_draw_rotate_handle(r)
 
 	# grid lines
 	var board_w := cell * W
@@ -948,6 +1697,17 @@ func _cell_centre(c: Vector2i) -> Vector2:
 	return origin + Vector2((c.x + 0.5) * cell, (c.y + 0.5) * cell)
 
 
+func _tube_layers() -> Array:
+	## colour, width multiple, how far the layer shifts towards the light
+	return [
+		[C_PIPE_SHADOW, 1.10, 0.00],
+		[C_PIPE_DARK,   0.94, 0.00],
+		[C_PIPE,        0.74, 0.08],
+		[C_PIPE_LIGHT,  0.40, 0.20],
+		[C_PIPE_HI,     0.15, 0.29],
+	]
+
+
 func _draw_pipes() -> void:
 	## Drawn as a lit tube rather than a flat line: a dark rim, a body, a lit
 	## side and a specular streak, all offset towards a light up and to the
@@ -955,19 +1715,28 @@ func _draw_pipes() -> void:
 	## way a real coupling wraps the outside of the pipe.
 	var w := cell * 0.36
 	pipe_flanges.clear()
+	cross_cells.clear()
 
 	var legs: Array = []          # [centre, outer end, direction]
 	var joints: Array = []        # cell centres, where legs meet
+	var plugs: Array = []         # pipe laid with no fitting chosen yet
 	for y in H:
 		for x in W:
 			if marks[y][x] != PIPE:
 				continue
 			var c := Vector2i(x, y)
 			var ctr := _cell_centre(c)
-			var conns := _connections(c)
+			var m: int = pieces[y][x]
+			if m == MASK_NONE:
+				plugs.append(ctr)
+				continue
+			if m == MASK_CROSS:
+				cross_cells.append(c)
 			joints.append(ctr)
-			for d in conns:
-				var dv := Vector2(d)
+			for i in 4:
+				if (m & BITS[i]) == 0:
+					continue
+				var dv := Vector2(DIRS[i])
 				# overshoot slightly so neighbouring cells meet with no seam
 				legs.append([ctr, ctr + dv * (cell * 0.5 + 0.7), dv])
 				pipe_flanges.append([ctr + dv * (cell * 0.5), dv])
@@ -979,14 +1748,7 @@ func _draw_pipes() -> void:
 
 	# Each layer is drawn across every leg before the next starts, so one
 	# cell's rim can never land on top of a neighbour's body.
-	var layers := [
-		[C_PIPE_SHADOW, 1.10, 0.00],
-		[C_PIPE_DARK,   0.94, 0.00],
-		[C_PIPE,        0.74, 0.08],
-		[C_PIPE_LIGHT,  0.40, 0.20],
-		[C_PIPE_HI,     0.15, 0.29],
-	]
-	for layer in layers:
+	for layer in _tube_layers():
 		var col: Color = layer[0]
 		var mul: float = layer[1]
 		var shift: float = layer[2]
@@ -997,6 +1759,59 @@ func _draw_pipes() -> void:
 		var joff := Vector2(-w * shift, -w * shift) * 0.7
 		for p in joints:
 			draw_circle(p + joff, w * mul * 0.5, col)
+
+	# a blanked-off boss where pipe is laid but the fitting is still open
+	for p in plugs:
+		draw_circle(p, w * 0.58, C_PIPE_SHADOW)
+		draw_circle(p, w * 0.46, C_PIPE_DARK)
+		draw_circle(p + Vector2(-w * 0.06, -w * 0.06), w * 0.26, C_PIPE)
+		draw_arc(p, w * 0.36, PI * 1.05, PI * 1.75, 12,
+				Color(C_PIPE_LIGHT.r, C_PIPE_LIGHT.g, C_PIPE_LIGHT.b, 0.7),
+				maxf(w * 0.08, 1.0), true)
+
+
+func _draw_overpasses() -> void:
+	## At a cross the route goes over itself, so the horizontal run is redrawn
+	## on top -- after the water, or the water in the pipe underneath would
+	## show through the pipe above it.
+	if cross_cells.is_empty():
+		return
+	var w := cell * 0.36
+	var reach := cell * 0.46
+	var front := clampf(flow_pos, 0.0, float(maxi(route.size() - 1, 0)))
+	var wet := solved or flowing
+
+	for c in cross_cells:
+		var ctr := _cell_centre(c)
+		var a := ctr - Vector2(reach, 0.0)
+		var b := ctr + Vector2(reach, 0.0)
+		for layer in _tube_layers():
+			var off := Vector2(0.0, -w * float(layer[2]))
+			draw_line(a + off, b + off, layer[0], w * float(layer[1]), true)
+		# the collars on this run go over it too
+		for s in [-1.0, 1.0]:
+			var p := ctr + Vector2(cell * 0.5 * s, 0.0)
+			draw_line(p - Vector2(0.0, w * 0.72), p + Vector2(0.0, w * 0.72),
+					C_PIPE_SHADOW, w * 0.34, true)
+			draw_line(p - Vector2(0.0, w * 0.66), p + Vector2(0.0, w * 0.66),
+					C_FLANGE, w * 0.22, true)
+
+		if not wet:
+			continue
+		# is the horizontal pass of this crossing wet, and how far?
+		var idx := -1
+		for i in range(1, route.size()):
+			if route[i] == c and route[i].y == route[i - 1].y:
+				idx = i
+				break
+		if idx < 0:
+			continue
+		var span := clampf(front - (float(idx) - 0.5), 0.0, 1.0)
+		if span <= 0.0:
+			continue
+		var dv := Vector2(route[idx] - route[idx - 1])
+		var from := ctr - dv * cell * 0.5
+		_water_run([from, from + dv * cell * span])
 
 
 func _draw_flanges() -> void:
@@ -1016,90 +1831,207 @@ func _draw_flanges() -> void:
 				C_PIPE_LIGHT, w * 0.07, true)
 
 
+func _water_run(pts: Array) -> void:
+	## Shaded channel, brighter core, then a sheen along the top: it has to read
+	## as liquid sitting inside the bore, not a line painted over the pipe.
+	## Each colour finishes before the next starts -- painting the shaded
+	## circles after the bright core left a ring at every cell centre.
+	var thick := cell * 0.36 * 0.50
+	var line := PackedVector2Array()
+	for p in pts:
+		line.append(p)
+	if line.size() < 2:
+		if line.size() == 1:
+			draw_circle(line[0], thick * 0.5, C_WATER)
+		return
+	draw_polyline(line, C_WATER_DEEP, thick, true)
+	for i in range(line.size() - 1):
+		draw_circle(line[i], thick * 0.5, C_WATER_DEEP)
+	draw_polyline(line, C_WATER, thick * 0.64, true)
+	for i in range(line.size() - 1):
+		draw_circle(line[i], thick * 0.32, C_WATER)
+	var sheen := PackedVector2Array()
+	for p in line:
+		sheen.append(p + Vector2(-thick * 0.15, -thick * 0.21))
+	draw_polyline(sheen, Color(C_WATER_HI.r, C_WATER_HI.g, C_WATER_HI.b, 0.45),
+			thick * 0.20, true)
+	draw_circle(line[line.size() - 1], thick * 0.58, C_WATER_HI)
+
+
 func _draw_water() -> void:
-	if sol_path.is_empty():
+	if route.is_empty():
 		return
 	var thick := cell * 0.36 * 0.50
-	var last := float(sol_path.size() - 1)
-
-	# `water` is 0..1 across the route, so the front sits exactly at
-	# water * (cells - 1) -- the same units flow_pos counts in.
-	var front := clampf(water, 0.0, 1.0) * last
-	var full := clampi(int(floor(front)), 0, sol_path.size() - 1)
+	if route.size() == 1:
+		draw_circle(_cell_centre(route[0]), thick * 0.58, C_WATER_HI)
+		return
+	var last := float(route.size() - 1)
+	var front := clampf(flow_pos, 0.0, last)
+	var full := clampi(int(floor(front)), 0, route.size() - 1)
 	var frac := clampf(front - float(full), 0.0, 1.0)
 
-	# One continuous run of water ending at the exact front, rather than
-	# per-cell halves -- drawing a cell's inbound half as soon as the front
-	# entered it made the water lurch half a cell at every boundary.
-	var pts := PackedVector2Array()
+	# One continuous run ending at the exact front, rather than per-cell
+	# halves -- drawing a cell's inbound half as soon as the front entered it
+	# made the water lurch half a cell at every boundary.
+	var pts: Array = []
 	for i in range(full + 1):
-		pts.append(_cell_centre(sol_path[i]))
-	var head: Vector2 = pts[pts.size() - 1]
-	if full < sol_path.size() - 1 and frac > 0.0:
-		head = _cell_centre(sol_path[full]).lerp(_cell_centre(sol_path[full + 1]), frac)
-		pts.append(head)
+		pts.append(_cell_centre(route[i]))
+	if full < route.size() - 1 and frac > 0.0:
+		pts.append(_cell_centre(route[full]).lerp(_cell_centre(route[full + 1]), frac))
+	_water_run(pts)
 
-	# shaded channel, brighter core, then a sheen along the top: it has to read
-	# as liquid sitting inside the bore, not a line painted over the pipe
-	# Each colour finishes before the next starts. Painting the shaded circles
-	# after the bright core left a ring at every cell centre.
-	if pts.size() >= 2:
-		draw_polyline(pts, C_WATER_DEEP, thick, true)
-	for i in range(pts.size() - 1):
-		draw_circle(pts[i], thick * 0.5, C_WATER_DEEP)
-	if pts.size() >= 2:
-		draw_polyline(pts, C_WATER, thick * 0.64, true)
-	for i in range(pts.size() - 1):
-		draw_circle(pts[i], thick * 0.32, C_WATER)
-	if pts.size() >= 2:
-		var sheen := PackedVector2Array()
-		for p in pts:
-			sheen.append(p + Vector2(-thick * 0.15, -thick * 0.21))
-		draw_polyline(sheen, Color(C_WATER_HI.r, C_WATER_HI.g, C_WATER_HI.b, 0.45),
-				thick * 0.20, true)
-	draw_circle(head, thick * 0.58, C_WATER_HI)
+
+func _tap_dir(c: Vector2i) -> Vector2:
+	## Which way the pipe leaves this tap. It is given to you, so the spigot
+	## is drawn facing it -- a real fitting points somewhere, and that first
+	## (or last) joint is a free foothold into the puzzle.
+	var m := int(solution.get(c, 0))
+	return Vector2(_dir_of_bit(m & -m))
+
+
+func _draw_spigot(c: Vector2i, is_in: bool) -> void:
+	## The inlet is a valve on the wall, the outlet a drain into it. Both are
+	## built along the direction the pipe actually runs, so you can read the
+	## first and last joint straight off the board.
+	var f := _tap_dir(c)
+	if f == Vector2.ZERO:
+		return
+	var ctr := _cell_centre(c)
+	var w := cell * 0.36
+	var col := C_GOOD if is_in else C_WATER
+
+	# the handle goes towards the light where there is a choice
+	var s := Vector2(-f.y, f.x)
+	if s.y > 0.0 or (is_zero_approx(s.y) and s.x > 0.0):
+		s = -s
+
+	var back := ctr - f * cell * 0.46
+	var plate := s * cell * 0.27
+
+	# the wall plate it is bolted to
+	draw_line(back - plate, back + plate, C_PIPE_SHADOW, cell * 0.15, true)
+	draw_line(back - plate, back + plate, C_FLANGE, cell * 0.11, true)
+	draw_line(back - plate + f * cell * 0.025, back + plate + f * cell * 0.025,
+			C_PIPE_LIGHT, cell * 0.035, true)
+	for k in [-0.19, 0.19]:
+		draw_circle(back + s * cell * k, maxf(cell * 0.024, 1.0), C_PIPE_DARK)
+
+	# the body, a shade fatter than the pipe so it reads as a casting
+	var body_a := back + f * cell * 0.07
+	for layer in _tube_layers():
+		var off := Vector2(-absf(f.y), -absf(f.x)) * (w * float(layer[2]))
+		draw_line(body_a + off, ctr + off, layer[0],
+				w * 1.16 * float(layer[1]), true)
+
+	if is_in:
+		# a valve: bonnet, stem, handwheel
+		var base := ctr - f * cell * 0.17
+		var stem := base + s * cell * 0.29
+		draw_line(base, stem, C_PIPE_SHADOW, cell * 0.13, true)
+		draw_line(base, stem, C_FLANGE, cell * 0.085, true)
+		var bar := Vector2(-s.y, s.x) * cell * 0.16
+		draw_line(stem - bar, stem + bar, C_PIPE_SHADOW, cell * 0.11, true)
+		draw_line(stem - bar, stem + bar, col, cell * 0.065, true)
+		draw_circle(stem, cell * 0.06, C_PIPE_SHADOW)
+		draw_circle(stem, cell * 0.042, col)
+	else:
+		# a drain: the pipe flares into a bell mouth with a grate over it
+		var mouth := ctr - f * cell * 0.26
+		draw_colored_polygon(PackedVector2Array([
+				mouth - plate * 0.52, mouth + plate * 0.52,
+				back + plate * 0.94, back - plate * 0.94]), C_PIPE_DARK)
+		draw_colored_polygon(PackedVector2Array([
+				mouth - plate * 0.34, mouth + plate * 0.34,
+				back + plate * 0.74, back - plate * 0.74]), C_PIPE_SHADOW)
+		# bars across the opening, splaying out with the flare
+		for i in 3:
+			var k := -0.45 + 0.45 * float(i)
+			var p0: Vector2 = mouth.lerp(back, 0.25) + plate * (0.55 * k)
+			var p1: Vector2 = mouth.lerp(back, 0.85) + plate * (0.80 * k)
+			draw_line(p0, p1, col, maxf(cell * 0.03, 1.0), true)
+		draw_line(mouth - plate * 0.52, mouth + plate * 0.52,
+				C_FLANGE, maxf(cell * 0.04, 1.5), true)
 
 
 func _draw_taps() -> void:
-	for c in [inlet, outlet]:
-		var ctr := _cell_centre(c)
-		var is_in: bool = c == inlet
-		var col := C_GOOD if is_in else C_WATER
-		draw_arc(ctr, cell * 0.30, 0, TAU, 28, col, maxf(cell * 0.055, 2.0), true)
-
-		# an arrowhead just inside the board edge, showing which way water goes.
-		# kept inside the cell so it never collides with the clue numbers.
-		var d := _outward(c)
-		if d == Vector2i.ZERO:
-			continue
-		var dv := Vector2(d)
-		var side := Vector2(-dv.y, dv.x)
-		var tip_out := ctr + dv * (cell * 0.5 - cell * 0.04)
-		var tip_in := ctr + dv * (cell * 0.5 - cell * 0.30)
-		# inlet points inward (water arriving), outlet points outward (leaving)
-		var tip := tip_out if not is_in else tip_in
-		var back := tip_in if not is_in else tip_out
-		var wing := cell * 0.15
-		draw_colored_polygon(PackedVector2Array([
-			tip, back + side * wing, back - side * wing]), col)
-
-
-func _outward(c: Vector2i) -> Vector2i:
-	if c.y == 0:
-		return Vector2i(0, -1)
-	if c.y == H - 1:
-		return Vector2i(0, 1)
-	if c.x == 0:
-		return Vector2i(-1, 0)
-	if c.x == W - 1:
-		return Vector2i(1, 0)
-	return Vector2i.ZERO
+	_draw_spigot(inlet, true)
+	_draw_spigot(outlet, false)
 
 
 # ---- footer / buttons ----------------------------------------------------
 
-func _draw_footer() -> void:
-	buttons.clear()
+func _draw_mini_mask(centre: Vector2, size: float, m: int) -> void:
+	## A fitting drawn small, the same way the board draws it.
+	var w := size * 0.36
+	var legs: Array = []
+	for i in 4:
+		if (m & BITS[i]) != 0:
+			legs.append(Vector2(DIRS[i]))
+	for layer in _tube_layers():
+		for dv in legs:
+			var off: Vector2 = Vector2(-absf(dv.y), -absf(dv.x)) * (w * float(layer[2]))
+			draw_line(centre + off, centre + dv * size * 0.5 + off,
+					layer[0], w * float(layer[1]), true)
+		var joff := Vector2(-w, -w) * float(layer[2]) * 0.7
+		draw_circle(centre + joff, w * float(layer[1]) * 0.5, layer[0])
+
+
+func _draw_mini(centre: Vector2, size: float, t: int) -> void:
+	var w := size * 0.36
+	if t == TOOL_EMPTY:
+		var h := size * 0.3
+		draw_line(centre + Vector2(-h, -h), centre + Vector2(h, h), C_BLOCK, 3.0, true)
+		draw_line(centre + Vector2(-h, h), centre + Vector2(h, -h), C_BLOCK, 3.0, true)
+		return
+	if t == TOOL_PIPE:
+		draw_circle(centre, w * 0.58, C_PIPE_SHADOW)
+		draw_circle(centre, w * 0.46, C_PIPE_DARK)
+		draw_circle(centre + Vector2(-w * 0.06, -w * 0.06), w * 0.26, C_PIPE)
+		return
+	_draw_mini_mask(centre, size, _tool_mask(t))
+
+
+func _draw_rotate_handle(r: Rect2) -> void:
+	## The corner handle: it turns what is in the cell, so a tap on the cell
+	## body can go on meaning "lay one here".
+	var p := r.position + Vector2(r.size.x * 0.81, r.size.y * 0.19)
+	var rad := cell * 0.145
+	draw_circle(p, rad, Color(0.0, 0.0, 0.0, 0.45))
+	draw_arc(p, rad * 0.62, PI * 0.35, PI * 1.85, 14, C_ACCENT,
+			maxf(cell * 0.03, 1.5), true)
+	var tip := p + Vector2(cos(PI * 0.35), sin(PI * 0.35)) * rad * 0.62
+	draw_circle(tip, maxf(cell * 0.035, 1.5), C_ACCENT)
+
+
+# ---- controls -------------------------------------------------------------
+
+func _button(r: Rect2, label: String, action: String, off := false,
+		on := false, fsize := 16, dim := false) -> void:
+	var hot := r.has_point(mouse) and not off
+	var fill := C_BTN_HOT if (hot or on) else C_BTN
+	if dim and not (hot or on):
+		fill = Color(C_BTN.r, C_BTN.g, C_BTN.b, 0.55)
+	draw_rect(r, fill, true)
+	draw_rect(r, C_ACCENT if on else C_GRID_BOLD, false, 2.0 if on else 1.0)
+	var lc := C_TEXT_DONE if off else (C_TEXT if (hot or on) else C_TEXT_DIM)
+	_text_c(label, r.position + Vector2(r.size.x * 0.5,
+			r.size.y * 0.5 + float(fsize) * 0.36), fsize, lc)
+	buttons.append({"rect": r, "action": action})
+
+
+func _tool_button(r: Rect2, t: int, labelled := true, icon := 34.0) -> void:
+	var on: bool = tool == t
+	draw_rect(r, C_BTN_HOT if (on or r.has_point(mouse)) else C_BTN, true)
+	draw_rect(r, C_ACCENT if on else C_GRID_BOLD, false, 2.0 if on else 1.0)
+	var cy := 24.0 if labelled else r.size.y * 0.5
+	_draw_mini(r.position + Vector2(r.size.x * 0.5, cy), icon, t)
+	if labelled:
+		_text_c(TOOL_NAMES[t], r.position + Vector2(r.size.x * 0.5,
+				r.size.y - 9.0), 13, C_TEXT if on else C_TEXT_DIM)
+	buttons.append({"rect": r, "action": TOOL_ACTIONS[t]})
+
+
+func _nav_items() -> Array:
 	var mode_label := "Mode: Flow"
 	var mode_off := false
 	if mode == MODE_ZEN:
@@ -1108,66 +2040,285 @@ func _draw_footer() -> void:
 			mode_off = true
 		else:
 			mode_label = "Mode: Zen"
-	var labels := [
+	return [
 		["‹ Prev", "prev", false], ["Reset", "reset", false], ["Hint", "hint", false],
 		[mode_label, "mode", mode_off], ["Next ›", "next", false],
+		["Layouts", "layouts", false],
 	]
-	# --- what a tap does: the primary control once there is no right button --
-	var tr := Rect2(20.0, 908.0, VW - 40.0, 64.0)
-	var laying := paint_mode == PIPE
-	var tint := C_PIPE if laying else C_BLOCK
-	draw_rect(tr, C_BTN_HOT if tr.has_point(mouse) else C_BTN, true)
-	draw_rect(tr, tint, false, 2.0)
 
-	# a swatch of what a tap puts down
-	var sw := Rect2(tr.position + Vector2(16.0, 12.0), Vector2(40.0, 40.0))
-	draw_rect(sw, C_CELL, true)
-	var sc := sw.position + sw.size * 0.5
-	if laying:
-		draw_line(sc - Vector2(20, 0), sc + Vector2(20, 0), C_PIPE_DARK, 17.0, true)
-		draw_line(sc - Vector2(20, 0), sc + Vector2(20, 0), C_PIPE, 11.0, true)
-	else:
-		draw_line(sc + Vector2(-11, -11), sc + Vector2(11, 11), C_BLOCK, 4.0, true)
-		draw_line(sc + Vector2(-11, 11), sc + Vector2(11, -11), C_BLOCK, 4.0, true)
 
-	_text_c("tap lays PIPE" if laying else "tap marks EMPTY",
-			Vector2(VW * 0.5, 938), 21, tint)
-	_text_c("tap here to switch   ·   on a mouse, right-drag does the other",
-			Vector2(VW * 0.5, 961), 14, C_TEXT_DIM)
-	buttons.append({"rect": tr, "action": "tap"})
-
-	var total := VW - 40.0
+func _draw_nav_row(y: float, h: float, fsize: int, dim: bool) -> void:
+	var items := _nav_items()
 	var gap := 8.0
-	var bw := (total - gap * (labels.size() - 1)) / labels.size()
-	var by := 982.0
-	var bh := 48.0
-	for i in labels.size():
-		var r := Rect2(20.0 + i * (bw + gap), by, bw, bh)
-		var off: bool = labels[i][2]
-		var hot := r.has_point(mouse) and not off
-		draw_rect(r, C_BTN_HOT if hot else C_BTN, true)
-		draw_rect(r, C_GRID_BOLD, false, 1.0)
-		var lc := C_TEXT_DONE if off else (C_TEXT if hot else C_TEXT_DIM)
-		_text_c(labels[i][0], r.position + Vector2(r.size.x * 0.5, bh * 0.5 + 6.0),
-				17, lc)
-		buttons.append({"rect": r, "action": labels[i][1]})
+	var bw := (VW - 40.0 - gap * float(items.size() - 1)) / float(items.size())
+	for i in items.size():
+		_button(Rect2(20.0 + i * (bw + gap), y, bw, h), str(items[i][0]),
+				str(items[i][1]), bool(items[i][2]), false, fsize, dim)
 
-	# legend for the two taps
-	var ly := 1048.0
-	draw_circle(Vector2(254, ly - 5), 6.0, C_GOOD)
-	_text_c("inlet", Vector2(290, ly), 15, C_TEXT_DIM)
-	draw_circle(Vector2(430, ly - 5), 6.0, C_WATER)
-	_text_c("outlet", Vector2(470, ly), 15, C_TEXT_DIM)
 
-	_text_c("the pipe never runs alongside itself — touching pipe cells are always joined",
-			Vector2(VW * 0.5, 1070), 15, C_TEXT_DONE)
+func _tip_text() -> String:
+	match _input_mode():
+		IN_HANDLE:
+			return "tap a cell to lay a fitting · use its corner handle to turn it"
+		IN_DRAG:
+			return "drag in and out of a cell and the elbow follows your stroke"
+		IN_RADIAL:
+			return "hold a cell for the ring of fittings · a quick tap just marks it"
+		IN_CYCLE:
+			return "tap a cell to cycle only what your own marks allow — no palette"
+	if tool == TOOL_PIPE:
+		return "plain pipe — decide the fitting later"
+	if tool == TOOL_EMPTY:
+		return "cross off a cell the pipe cannot run through"
+	if tool == TOOL_CROSS:
+		return "a cross only goes where the route passes over itself"
+	return "tap a cell to lay it · tap the cell again to rotate"
+
+
+func _draw_controls() -> void:
+	buttons.clear()
+	var top := VH - ctrl_h
+	match _chrome():
+		CHROME_PANEL: _chrome_panel(top)
+		CHROME_BAR: _chrome_bar()
+		CHROME_PAD: _chrome_pad(top)
+		CHROME_NONE: _chrome_none(top)
+		CHROME_SIDE: _chrome_side()
+		CHROME_TRAY: _chrome_tray(top)
+		_: _chrome_rows(top)
+
+
+func _palette_row(x: float, y: float, w: float, h: float) -> void:
+	var gap := 8.0
+	var tw := (w - gap * 4.0) / 5.0
+	for i in 5:
+		_tool_button(Rect2(x + i * (tw + gap), y, tw, h), i)
+
+
+func _chrome_rows(top: float) -> void:
+	_palette_row(20.0, top + 2.0, VW - 40.0, 64.0)
+	_text_c(_tip_text(), Vector2(VW * 0.5, top + 84.0), 14, C_TEXT_DIM)
+	_draw_nav_row(top + 94.0, 44.0, 16, false)
+	_text_c(RULE_LINE, Vector2(VW * 0.5, top + 160.0), 14, C_TEXT_DONE)
+
+
+func _chrome_panel(top: float) -> void:
+	## The palette raised onto its own panel, everything else dimmed to chrome,
+	## so the thing you touch most no longer looks like the thing you touch least.
+	var panel := Rect2(14.0, top, VW - 28.0, 112.0)
+	draw_rect(panel, C_PANEL, true)
+	draw_rect(Rect2(panel.position, Vector2(panel.size.x, 3.0)), C_ACCENT, true)
+	draw_rect(panel, C_GRID_BOLD, false, 1.0)
+	_palette_row(panel.position.x + 10.0, top + 10.0, panel.size.x - 20.0, 66.0)
+	_text_c(_tip_text(), Vector2(VW * 0.5, top + 98.0), 14, C_TEXT_DIM)
+	_draw_nav_row(top + 122.0, 38.0, 14, true)
+	_text_c(RULE_LINE, Vector2(VW * 0.5, top + 174.0), 13, C_TEXT_DONE)
+
+
+func _chrome_bar() -> void:
+	## Board first: one chip, and the controls come up only when asked for.
+	if bar_open:
+		var panel := Rect2(14.0, VH - 236.0, VW - 28.0, 166.0)
+		draw_rect(panel, C_PANEL, true)
+		draw_rect(panel, C_ACCENT, false, 1.0)
+		_palette_row(panel.position.x + 10.0, panel.position.y + 10.0,
+				panel.size.x - 20.0, 66.0)
+		_draw_nav_row(panel.position.y + 88.0, 38.0, 14, true)
+		_text_c(_tip_text(), Vector2(VW * 0.5, panel.position.y + 150.0), 13,
+				C_TEXT_DIM)
+	var chip := Rect2(20.0, VH - 58.0, VW - 40.0, 46.0)
+	draw_rect(chip, C_BTN_HOT if chip.has_point(mouse) else C_BTN, true)
+	draw_rect(chip, C_ACCENT, false, 1.0)
+	_draw_mini(chip.position + Vector2(32.0, 23.0), 30.0, tool)
+	_text_l(TOOL_NAMES[tool], chip.position + Vector2(60.0, 29.0), 17, C_TEXT)
+	_text_r("close ⌄" if bar_open else "controls ⌃",
+			Vector2(chip.end.x - 14.0, chip.position.y + 14.0), 15, C_TEXT_DIM)
+	buttons.append({"rect": chip, "action": "bar"})
+
+
+func _chrome_pad(top: float) -> void:
+	## A thumb pad in the corner: the nine things you actually reach for, where
+	## your thumb already is, and the board keeps everything above it.
+	var sz := 72.0
+	var gap := 6.0
+	var pad := Vector2(VW - 20.0 - (sz * 3.0 + gap * 2.0), top + 6.0)
+	var slots := [
+		[TOOL_STRAIGHT, ""], [TOOL_ELBOW, ""], [TOOL_CROSS, ""],
+		[TOOL_PIPE, ""], [TOOL_EMPTY, ""], [-1, "turn"],
+		[-1, "undo"], [-1, "hint"], [-1, "layouts"],
+	]
+	var extra := ["rotate", "undo", "hint", "layouts"]
+	var ei := 0
+	for i in 9:
+		var r := Rect2(pad + Vector2(float(i % 3) * (sz + gap),
+				float(i / 3) * (sz + gap)), Vector2(sz, sz))
+		var t: int = slots[i][0]
+		if t >= 0:
+			_tool_button(r, t, true, 30.0)
+		else:
+			var label := str(slots[i][1])
+			_button(r, label, extra[ei], false, false, 14)
+			ei += 1
+	var left_w := pad.x - 30.0
+	var items := _nav_items()
+	for i in 4:
+		var r := Rect2(20.0 + float(i % 2) * (left_w * 0.5 + 6.0),
+				top + 6.0 + float(i / 2) * 62.0, left_w * 0.5 - 6.0, 56.0)
+		_button(r, str(items[i][0]), str(items[i][1]), bool(items[i][2]), false, 15)
+	_text_c(_tip_text(), Vector2(20.0 + left_w * 0.5, top + 156.0), 13, C_TEXT_DIM)
+
+
+func _chrome_none(top: float) -> void:
+	## No palette at all: the input mode carries the fittings on its own.
+	_text_c(_tip_text(), Vector2(VW * 0.5, top + 20.0), 15, C_TEXT_DIM)
+	_draw_nav_row(VH - 58.0, 46.0, 16, false)
+
+
+func _chrome_side() -> void:
+	## Landscape: fittings under the left thumb, utilities under the right,
+	## board in the middle where both can reach it.
+	var y := head_h + 6.0
+	var avail := VH - y - 54.0
+	var hgt := avail / 5.0 - 6.0
+	for i in 5:
+		_tool_button(Rect2(14.0, y + float(i) * (hgt + 6.0), 144.0, hgt), i, true, 30.0)
+	var items := _nav_items()
+	var hgt2 := avail / float(items.size()) - 6.0
+	for i in items.size():
+		_button(Rect2(VW - 158.0, y + float(i) * (hgt2 + 6.0), 144.0, hgt2),
+				str(items[i][0]), str(items[i][1]), bool(items[i][2]), false, 14)
+	_text_c(_tip_text(), Vector2(VW * 0.5, VH - 30.0), 14, C_TEXT_DIM)
+	_text_c(RULE_LINE, Vector2(VW * 0.5, VH - 10.0), 12, C_TEXT_DONE)
+
+
+func _chrome_tray(top: float) -> void:
+	## The workbench: a blueprint on a bench, the fittings lying in a parts
+	## tray, and a pressure gauge instead of a progress bar.
+	draw_rect(Rect2(0, top - 8.0, VW, 8.0), C_BENCH_DARK, true)
+	var tray := Rect2(14.0, top + 4.0, VW - 28.0, 94.0)
+	draw_rect(tray, C_BENCH_DARK, true)
+	draw_rect(tray, Color(0, 0, 0, 0.4), false, 2.0)
+
+	var g := tray.position + Vector2(52.0, 47.0)
+	draw_circle(g, 37.0, C_BENCH)
+	draw_circle(g, 31.0, Color("d9cfbd"))
+	var frac := 1.0
+	if mode == MODE_FLOW and not solved and not lost and grace_left <= 0.0:
+		frac = clampf(pressure_left / PRESSURE_SECONDS, 0.0, 1.0)
+	for i in 7:
+		var a := PI * 0.75 + float(i) / 6.0 * PI * 1.5
+		var dv := Vector2(cos(a), sin(a))
+		draw_line(g + dv * 21.0, g + dv * 27.0, C_BENCH_DARK, 2.0, true)
+	var ang := PI * 0.75 + (1.0 - frac) * PI * 1.5
+	draw_line(g, g + Vector2(cos(ang), sin(ang)) * 25.0, C_BAD, 3.0, true)
+	draw_circle(g, 4.0, C_BENCH_DARK)
+
+	var sx := tray.position.x + 100.0
+	var sw := (tray.size.x - 110.0) / 5.0
+	for i in 5:
+		var r := Rect2(sx + float(i) * sw + 4.0, tray.position.y + 8.0,
+				sw - 8.0, 78.0)
+		draw_rect(r, Color(0, 0, 0, 0.35), true)
+		var on: bool = tool == i
+		if on or r.has_point(mouse):
+			draw_rect(r, C_ACCENT if on else C_GRID_BOLD, false, 2.0)
+		_draw_mini(r.position + Vector2(r.size.x * 0.5, 30.0), 34.0, i)
+		_text_c(TOOL_NAMES[i], r.position + Vector2(r.size.x * 0.5, 68.0), 12,
+				Color("d9cfbd") if on else C_TEXT_DIM)
+		buttons.append({"rect": r, "action": TOOL_ACTIONS[i]})
+
+	_draw_nav_row(top + 106.0, 38.0, 14, true)
+	_text_c(_tip_text(), Vector2(VW * 0.5, top + 164.0), 13, Color("8a7c66"))
+
+
+# ---- the radial, and the layout picker -----------------------------------
+
+func _radial_radius() -> float:
+	return maxf(cell * 0.95, 56.0)
+
+
+func _radial_centre() -> Vector2:
+	## Held on a cell near an edge, the ring would hang off the screen and the
+	## slots out there could not be reached. Pull it back inside. Drawing and
+	## hit-testing both come through here, so the ring always answers where it
+	## is actually drawn.
+	var reach := _radial_radius() + cell * 0.37 + 6.0
+	var c := _cell_centre(radial_cell)
+	return Vector2(clampf(c.x, reach, VW - reach), clampf(c.y, reach, VH - reach))
+
+
+func _radial_slot_at(p: Vector2) -> int:
+	if radial_cell.x < 0:
+		return -2
+	var v := p - _radial_centre()
+	if v.length() < _radial_radius() * 0.45:
+		return -2                     # still in the middle: nothing chosen yet
+	var a := fposmod(v.angle() + PI * 0.5, TAU)
+	return int(round(a / (TAU / 8.0))) % 8
+
+
+func _draw_radial() -> void:
+	var ctr := _radial_centre()
+	var rad := _radial_radius()
+	draw_circle(ctr, rad + cell * 0.45, Color(0, 0, 0, 0.58))
+	draw_arc(ctr, rad, 0, TAU, 40, Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.25),
+			1.0, true)
+	for i in 8:
+		var a := -PI * 0.5 + float(i) * TAU / 8.0
+		var p := ctr + Vector2(cos(a), sin(a)) * rad
+		var on: bool = i == radial_pick
+		var rr := cell * 0.37
+		draw_circle(p, rr, C_BTN_HOT if on else C_BTN)
+		draw_arc(p, rr, 0, TAU, 22, C_ACCENT if on else C_GRID_BOLD,
+				2.0 if on else 1.0, true)
+		var m: int = RADIAL_SLOTS[i]
+		if m < 0:
+			var h := rr * 0.44
+			draw_line(p + Vector2(-h, -h), p + Vector2(h, h), C_BLOCK, 3.0, true)
+			draw_line(p + Vector2(-h, h), p + Vector2(h, -h), C_BLOCK, 3.0, true)
+		else:
+			_draw_mini_mask(p, cell * 0.68, m)
+
+
+func _draw_picker() -> void:
+	buttons.clear()
+	draw_rect(Rect2(0, 0, VW, VH), Color(0, 0, 0, 0.74), true)
+	var panel := Rect2(20.0, 36.0, VW - 40.0, VH - 72.0)
+	draw_rect(panel, C_PANEL, true)
+	draw_rect(panel, C_ACCENT, false, 2.0)
+	_text_c("LAYOUTS — tap one to play it", Vector2(VW * 0.5, panel.position.y + 34.0),
+			22, C_ACCENT)
+	_text_c("L closes this · [ and ] step through them while you play",
+			Vector2(VW * 0.5, panel.position.y + 58.0), 14, C_TEXT_DIM)
+
+	var cols := 2
+	var rows := int(ceil(float(LAYOUTS.size()) / float(cols)))
+	var gw := (panel.size.x - 50.0) / float(cols)
+	var gh := minf(58.0, (panel.size.y - 180.0) / float(rows))
+	for i in LAYOUTS.size():
+		var r := Rect2(panel.position.x + 20.0 + float(i % cols) * (gw + 10.0),
+				panel.position.y + 78.0 + float(i / cols) * (gh + 6.0), gw, gh)
+		var on: bool = i == layout
+		draw_rect(r, C_BTN_HOT if (on or r.has_point(mouse)) else C_BTN, true)
+		draw_rect(r, C_ACCENT if on else C_GRID_BOLD, false, 2.0 if on else 1.0)
+		_text_l("%d · %s" % [i, str(LAYOUTS[i].get("name", "?"))],
+				r.position + Vector2(12.0, 24.0), 15, C_TEXT if on else C_TEXT_DIM)
+		_text_l(str(LAYOUTS[i].get("tier", "")),
+				r.position + Vector2(12.0, 44.0), 12, C_TEXT_DONE)
+		buttons.append({"rect": r, "action": "pick_%d" % i})
+
+	_text_c(str(LAYOUTS[layout].get("note", "")),
+			Vector2(VW * 0.5, panel.end.y - 56.0), 14, C_TEXT)
+	_button(Rect2(VW * 0.5 - 90.0, panel.end.y - 44.0, 180.0, 34.0),
+			"Close", "layouts", false, false, 15)
 
 
 func _draw_burst() -> void:
 	if burst_cell.x < 0:
 		return
 	var ctr := _cell_centre(burst_cell)
-	var r := Rect2(origin.x + burst_cell.x * cell, origin.y + burst_cell.y * cell, cell, cell)
+	var r := Rect2(origin.x + burst_cell.x * cell, origin.y + burst_cell.y * cell,
+			cell, cell)
 	draw_rect(r, Color(C_BAD.r, C_BAD.g, C_BAD.b, 0.35), true)
 	# a splash of spray out of the failed joint
 	for i in 12:
@@ -1179,29 +2330,28 @@ func _draw_burst() -> void:
 
 
 func _draw_lost_banner() -> void:
-	var r := Rect2(20.0, 820.0, VW - 40.0, 80.0)
+	var r := _banner_rect()
 	draw_rect(r, Color(C_BAD.r * 0.26, C_BAD.g * 0.12, C_BAD.b * 0.16, 0.95), true)
 	draw_rect(r, C_BAD, false, 2.0)
-	_text_c("BURST", Vector2(VW * 0.5, 854), 28, C_BAD)
-	var laid := _laid_prefix()
+	_text_c("BURST", r.position + Vector2(r.size.x * 0.5, 34.0), 28, C_BAD)
 	var why := "the water caught up with your plumbing"
-	if _find_leak(int(flow_pos)).x >= 0:
-		why = "the water found pipe that was never on the route"
-	_text_c("%s — %d of %d cells laid. Click to try again."
-			% [why, laid, sol_path.size()],
-			Vector2(VW * 0.5, 884), 16, C_TEXT)
+	if burst_leak:
+		why = "a fitting sent the water where the pipe never went"
+	_text_c("%s — %d of %d cells carried water. Click to try again."
+			% [why, route.size(), sol_walk.size()],
+			r.position + Vector2(r.size.x * 0.5, 64.0), 16, C_TEXT)
 
 
 func _draw_banner() -> void:
-	var r := Rect2(20.0, 820.0, VW - 40.0, 80.0)
+	var r := _banner_rect()
 	draw_rect(r, Color(C_GOOD.r * 0.18, C_GOOD.g * 0.3, C_GOOD.b * 0.22, 0.95), true)
 	draw_rect(r, C_GOOD, false, 2.0)
-	_text_c("WATER'S ON", Vector2(VW * 0.5, 854), 28, C_GOOD)
+	_text_c("WATER'S ON", r.position + Vector2(r.size.x * 0.5, 34.0), 28, C_GOOD)
 	var mins := int(elapsed) / 60
 	var secs := int(elapsed) % 60
-	_text_c("%d cells of pipe in %d:%02d — click anywhere for the next one"
+	_text_c("%d fittings in %d:%02d — click anywhere for the next one"
 			% [solution.size(), mins, secs],
-			Vector2(VW * 0.5, 884), 16, C_TEXT)
+			r.position + Vector2(r.size.x * 0.5, 64.0), 16, C_TEXT)
 
 
 # ---- text helpers --------------------------------------------------------
@@ -1210,6 +2360,10 @@ func _text_c(t: String, centre: Vector2, size: int, col: Color) -> void:
 	var w := font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
 	draw_string(font, Vector2(centre.x - w * 0.5, centre.y), t,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
+
+
+func _text_l(t: String, at: Vector2, size: int, col: Color) -> void:
+	draw_string(font, at, t, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
 
 
 func _text_r(t: String, right: Vector2, size: int, col: Color) -> void:
@@ -1222,32 +2376,196 @@ func _text_r(t: String, right: Vector2, size: int, col: Color) -> void:
 
 func _take_shot() -> void:
 	if shot_solve:
-		# through _set_mark, not straight into `marks` -- a screenshot that
+		# through _set_piece, not straight into the arrays -- a screenshot that
 		# skips the real editing path cannot be trusted as a check
-		for c in solution:
-			_set_mark(c, PIPE)
+		_lay_solution()
 		for y in H:
 			for x in W:
 				if marks[y][x] == UNKNOWN:
-					_set_mark(Vector2i(x, y), BLOCKED)
-		_check_solved()
+					_set_fill(Vector2i(x, y), BLOCKED)
+		_after_change()
 		solved = true
-		water = 0.62
+		flow_pos = float(route.size() - 1) * 0.62
 		elapsed = 184.0
+	elif shot_radial:
+		# the long-press ring open, which is the whole point of that layout and
+		# is invisible in any still that does not hold a cell down
+		var n3 := maxi(int(float(sol_walk.size()) * 0.5), 2)
+		for i in range(1, n3):
+			_set_piece(sol_walk[i], int(solution[sol_walk[i]]))
+		_after_change()
+		radial_cell = sol_walk[mini(n3, sol_walk.size() - 1)]
+		radial_pick = 3
+		elapsed = 38.0
+	elif shot_press:
+		# the water has caught up to the frontier and the clock is draining --
+		# the only moment the pressure ring is meant to show at all
+		grace_left = 0.0
+		flowing = true
+		var n2 := maxi(int(float(sol_walk.size()) * 0.45), 2)
+		for i in range(1, n2):
+			_set_piece(sol_walk[i], int(solution[sol_walk[i]]))
+		_after_change()
+		solved = false
+		flow_pos = float(route.size() - 1)
+		pressure_left = PRESSURE_SECONDS * 0.45
+		elapsed = 63.0
+		tool = TOOL_ELBOW
 	elif shot_flow:
 		# mid-chase: part of the route laid, the water some way behind it
 		grace_left = 0.0
 		flowing = true
-		var n := maxi(int(float(sol_path.size()) * 0.62), 2)
-		for i in n:
-			_set_mark(sol_path[i], PIPE)
-		flow_pos = float(n) * 0.55
-		water = flow_pos / maxf(float(sol_path.size() - 1), 1.0)
+		var n := maxi(int(float(sol_walk.size()) * 0.62), 2)
+		for i in range(1, n):
+			_set_piece(sol_walk[i], int(solution[sol_walk[i]]))
+		_after_change()
+		solved = false
+		flow_pos = float(route.size() - 1) * 0.62
 		pressure_left = PRESSURE_SECONDS
 		elapsed = 47.0
+		tool = TOOL_ELBOW
 	queue_redraw()
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	var img := get_viewport().get_texture().get_image()
 	img.save_png(shot_path)
 	get_tree().quit()
+
+
+# ---- layout audit --------------------------------------------------------
+#  The faults a new layout actually produces are geometric: something off the
+#  edge of the viewport, chrome sitting on top of the board, or cells shrunk
+#  past the point where a thumb can hit them. Those are exactly the faults
+#  that are tedious and unreliable to catch by eye in fifteen screenshots,
+#  so the screenshot pass checks them itself.
+
+func _inside(outer: Rect2, inner: Rect2) -> bool:
+	return (inner.position.x >= outer.position.x - 0.5
+			and inner.position.y >= outer.position.y - 0.5
+			and inner.end.x <= outer.end.x + 0.5
+			and inner.end.y <= outer.end.y + 0.5)
+
+
+func _board_rect() -> Rect2:
+	return Rect2(origin - Vector2(gutter_l, gutter_t),
+			Vector2(cell * float(W) + gutter_l + gutter_r,
+					cell * float(H) + gutter_t + gutter_b))
+
+
+func _layout_audit(tag: String) -> Array:
+	var bad: Array = []
+	var view := Rect2(0.0, 0.0, VW, VH)
+	var board := _board_rect()
+
+	if not _inside(view, board):
+		bad.append("board %.0f,%.0f %.0fx%.0f runs off the %.0fx%.0f viewport"
+				% [board.position.x, board.position.y, board.size.x,
+						board.size.y, VW, VH])
+	if cell < 30.0:
+		bad.append("cells are %.1fpx -- too small to hit with a thumb" % cell)
+
+	# The grid proper, without the clue gutters -- the clues belong in the
+	# gutters, so only the grid has to stay clear of the header and the
+	# controls. A board allowed into either band gets text drawn across it.
+	var grid := Rect2(origin, Vector2(cell * float(W), cell * float(H)))
+	var head_band := Rect2(0.0, 0.0, VW, head_h)
+	var foot_band := Rect2(0.0, VH - ctrl_h, VW, ctrl_h)
+	if ctrl_h > 0.0 and grid.intersects(foot_band):
+		bad.append("grid reaches y=%.0f, into the %.0fpx the controls reserve"
+				% [grid.end.y, ctrl_h])
+	if head_h > 0.0 and grid.intersects(head_band):
+		bad.append("grid starts at y=%.0f, inside the %.0fpx header"
+				% [grid.position.y, head_h])
+
+	if int(_lay("input", IN_PALETTE)) == IN_RADIAL:
+		var reach := _radial_radius() + cell * 0.37
+		var was := radial_cell
+		for corner in [Vector2i(0, 0), Vector2i(W - 1, 0), Vector2i(0, H - 1),
+				Vector2i(W - 1, H - 1)]:
+			radial_cell = corner
+			var ctr := _radial_centre()
+			var ring := Rect2(ctr - Vector2(reach, reach),
+					Vector2(reach * 2.0, reach * 2.0))
+			if not _inside(view, ring):
+				bad.append("the long-press ring at cell %d,%d runs off the viewport"
+						% [corner.x, corner.y])
+				break
+		radial_cell = was
+
+	var banner := _banner_rect()
+	if not _inside(view, banner):
+		bad.append("banner %.0f,%.0f %.0fx%.0f runs off the viewport"
+				% [banner.position.x, banner.position.y, banner.size.x,
+						banner.size.y])
+
+	for b in buttons:
+		var r: Rect2 = b["rect"]
+		var name := str(b.get("action", "?"))
+		if not _inside(view, r):
+			bad.append("'%s' at %.0f,%.0f %.0fx%.0f runs off the viewport"
+					% [name, r.position.x, r.position.y, r.size.x, r.size.y])
+		if r.size.x < 34.0 or r.size.y < 28.0:
+			bad.append("'%s' is only %.0fx%.0f -- too small to hit"
+					% [name, r.size.x, r.size.y])
+		# The picker is a modal sheet; it is meant to cover the board.
+		if not picking and board.intersects(r):
+			bad.append("'%s' overlaps the board" % name)
+
+	for i in buttons.size():
+		for j in range(i + 1, buttons.size()):
+			var a: Rect2 = buttons[i]["rect"]
+			var c: Rect2 = buttons[j]["rect"]
+			if a.intersects(c):
+				bad.append("'%s' and '%s' overlap each other"
+						% [str(buttons[i].get("action", "?")),
+								str(buttons[j].get("action", "?"))])
+
+	if bad.is_empty():
+		print("  %-28s ok   (%d buttons, %.0fpx cells)" % [tag, buttons.size(), cell])
+	else:
+		for msg in bad:
+			print("  %-28s FAULT  %s" % [tag, msg])
+	return bad
+
+
+func _audit_all() -> void:
+	print("auditing %d layouts at puzzle %d (%dx%d)"
+			% [LAYOUTS.size(), index + 1, W, H])
+	var faults := 0
+	for i in LAYOUTS.size():
+		layout = i
+		_apply_layout()
+		var nm := str(LAYOUTS[i].get("name", str(i)))
+		for open_picker in [false, true]:
+			picking = open_picker
+			queue_redraw()
+			await RenderingServer.frame_post_draw
+			await RenderingServer.frame_post_draw
+			var tag := "%d %s%s" % [i, nm, "  +picker" if open_picker else ""]
+			faults += _layout_audit(tag).size()
+	picking = false
+
+	# An audit that cannot fail proves nothing, so plant two faults it must
+	# catch -- one rect off the edge, one too small to hit -- and check it
+	# reports them before trusting a clean run above.
+	print("")
+	var keep: Array = buttons.duplicate()
+	buttons = [
+		{"rect": Rect2(VW - 10.0, 10.0, 80.0, 40.0), "action": "planted off-edge"},
+		{"rect": Rect2(12.0, 12.0, 12.0, 12.0), "action": "planted tiny"},
+	]
+	var probe: Array = _layout_audit("self-test (faults expected)")
+	buttons = keep
+	if probe.size() < 2:
+		print("  SELF-TEST FAILED -- the audit missed its own planted faults, "
+				+ "so the clean run above means nothing")
+		faults += 1
+	else:
+		print("  self-test ok -- both planted faults were caught")
+
+	print("")
+	if faults == 0:
+		print("%d layouts, no geometry faults" % LAYOUTS.size())
+	else:
+		print("%d geometry fault(s) over %d layouts" % [faults, LAYOUTS.size()])
+	get_tree().quit(1 if faults > 0 else 0)
