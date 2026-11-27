@@ -4,7 +4,7 @@
 #
 #   heavy tools/shots.sh [outdir] [puzzle] [state]
 #
-# state: flow (mid-chase, the default) | pressure | radial | solved | blank
+# state: flow (mid-chase, the default) | pressure | solved | blank
 set -u
 cd "$(dirname "$0")/.."
 OUT="${1:-/tmp/pipegram-shots}"
@@ -25,7 +25,6 @@ case "$STATE" in
   flow)   EXTRA="--flow" ;;
   solved) EXTRA="--solved" ;;
   pressure) EXTRA="--pressure" ;;
-  radial) EXTRA="--radial" ;;
   blank)  EXTRA="" ;;
 esac
 echo "$COUNT layouts -> $OUT  (puzzle $PUZZLE, $STATE)"
