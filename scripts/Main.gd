@@ -1925,7 +1925,16 @@ func _chrome_tray(top: float) -> void:
 func _draw_picker() -> void:
 	buttons.clear()
 	draw_rect(Rect2(0, 0, VW, VH), Color(0, 0, 0, 0.74), true)
-	var panel := Rect2(20.0, 36.0, VW - 40.0, VH - 72.0)
+
+	# The panel is sized to its contents rather than to the screen. It used to
+	# be the full height whatever was in it, which left a hand-span of dead
+	# space under the last row once the fitting layouts went.
+	var cols := 2
+	var rows := int(ceil(float(LAYOUTS.size()) / float(cols)))
+	var avail := VH - 72.0
+	var gh := minf(58.0, (avail - 180.0) / float(rows))
+	var ph := minf(avail, 78.0 + float(rows) * (gh + 6.0) + 76.0)
+	var panel := Rect2(20.0, (VH - ph) * 0.5, VW - 40.0, ph)
 	draw_rect(panel, C_PANEL, true)
 	draw_rect(panel, C_ACCENT, false, 2.0)
 	_text_c("LAYOUTS — tap one to play it", Vector2(VW * 0.5, panel.position.y + 34.0),
@@ -1933,10 +1942,7 @@ func _draw_picker() -> void:
 	_text_c("L closes this · [ and ] step through them while you play",
 			Vector2(VW * 0.5, panel.position.y + 58.0), 14, C_TEXT_DIM)
 
-	var cols := 2
-	var rows := int(ceil(float(LAYOUTS.size()) / float(cols)))
 	var gw := (panel.size.x - 50.0) / float(cols)
-	var gh := minf(58.0, (panel.size.y - 180.0) / float(rows))
 	for i in LAYOUTS.size():
 		var r := Rect2(panel.position.x + 20.0 + float(i % cols) * (gw + 10.0),
 				panel.position.y + 78.0 + float(i / cols) * (gh + 6.0), gw, gh)
