@@ -125,11 +125,32 @@ countdown drawn as a ring around the water's head rather than a bar up top.
 Against the first arrangement that is a 104 px cell instead of 88 px on a 6×6,
 and the countdown sits where your eyes already are.
 
+**Turn the phone and it rebuilds itself sideways.** There is no setting and
+nothing to press: rotating arrives as a window resize, in the browser and on
+Android alike, and that is the whole trigger. The design viewport swaps from
+760×1080 to 1080×760, the controls move from a panel across the bottom into
+columns down both edges — a panel would eat a quarter of a short screen — and
+the header collapses from three stacked lines into one strip, because height is
+exactly what a landscape board is short of.
+
+Be clear about what that buys, because it is not what you might assume. The
+grids are square, so landscape is the *worse* shape for them: an Expert 10×10
+is a 56 px cell sideways against 65 px upright. What it wins is the screen. A
+rotated phone showing the portrait viewport is letterboxed to a pillar in the
+middle with black down both sides, and the board ends up *smaller* than the
+sideways arrangement once the stretch is accounted for. So landscape is the
+right answer to "I turned my phone", not the fix for a cramped Expert. If a
+playtest says Expert on a phone is still too tight, that wants pinch-zoom.
+
 The four numbers that make it are named constants at the top of
 `scripts/Main.gd` — `HEAD_H`, `CTRL_H`, `BANNER_GAP`, and the ring — so the
 decision can be found and argued with rather than inferred from drawing code.
 The variants, the picker, the `L` / `[` / `]` keys and the six unused chrome
-builders are gone: about 340 lines.
+builders are gone: about 340 lines. What came back afterwards was landscape,
+not as a variant you pick but as a response to the window.
+
+`--portrait` and `--landscape` force one for a screenshot or an audit; nothing
+in the game reads them.
 
 To look at every state the board has:
 
@@ -146,8 +167,8 @@ godot --path . -- --layoutaudit --puzzle 6
 
 With one arrangement the thing that varies is the **board**: a 5×5 and a 10×10
 ask very different things of the same furniture, and the clue gutters are sized
-by measuring real text. So it now runs over **every puzzle in the set** rather
-than one sample against seven layouts. For each it checks that the board, the
+by measuring real text. So it runs over **every puzzle in the set, both ways
+up** — 44 checks. For each it checks that the board, the
 win banner and every button sit inside the viewport, that no control overlaps
 the board or another control, that the grid stays out of the bands the header
 and the controls reserve, and that nothing has shrunk below the size a thumb
@@ -267,7 +288,7 @@ must go through `_set_fill`**, the way a player does.
 ## Layout
 
 ```
-project.godot        Godot project (GL Compatibility, 760×1080 portrait)
+project.godot        Godot project (GL Compatibility, 760×1080 / 1080×760)
 Main.tscn            one Node2D, everything drawn in code
 scripts/Main.gd      board, derived fittings, clue checking, rendering, input
 data/puzzles.json    verified puzzles
@@ -285,10 +306,9 @@ do first:
 - Puzzles are a fixed baked set; generation does not run in-game.
 - Touch is playable but not polished: no drag threshold, so a sloppy tap can
   paint two cells, and there is no pinch-zoom on the bigger grids.
-- Portrait only. The landscape arrangement was deleted with the other variants,
-  and it was the honest fix for the big grids on a phone: an Expert 10×10 is a
-  65 px cell in portrait, playable but tight. If a playtest says Expert on a
-  phone matters, landscape comes back as a real mode rather than a variant.
+- Expert on a phone is tight either way up — 65 px a cell upright, 56 px
+  sideways — and there is no pinch-zoom yet. That, not the orientation, is
+  what a playtest will complain about.
 - Difficulty is just grid size. Real difficulty wants a measure of *how hard
   the deduction chain is*, not how big the board is.
 

@@ -57,6 +57,19 @@ const BANNER_GAP := 0.0    # no reserved win/lose strip -- the board takes it,
 # than a bar in the header. On a 6x6 this is a 104px cell against the 88px the
 # first arrangement managed.
 
+# Turn the phone and the same arrangement is rebuilt sideways: a panel across
+# the bottom would eat a quarter of a short screen, so the controls go into
+# columns down both edges and the board keeps the middle. Portrait is 760x1080
+# and landscape 1080x760; everything else is the same game.
+const SIDE_W := 172.0      # width of each column of controls
+const SIDE_FOOT := 54.0    # the tip and rule lines along the foot
+const HEAD_H_LAND := 64.0  # one strip, not three lines: see _draw_header
+
+# Which way up we are. Read from the real window, so a phone rotating is the
+# whole trigger -- there is no setting and nothing to press.
+var landscape := false
+var orient_force := 0      # 0 follow the window, 1 force portrait, 2 force landscape
+
 const TOOL_NAMES := ["pipe", "empty"]
 const TOOL_ACTIONS := ["tool_pipe", "tool_empty"]
 const RULE_LINE := "the pipe never runs alongside itself — touching pipe cells are always joined"
@@ -158,6 +171,7 @@ var L: Dictionary = {}
 var head_h := 208.0               # height the header reserves
 var ctrl_h := 176.0               # height the controls reserve at the bottom
 var banner_gap := 90.0            # the strip the win/lose banner sits in
+var side_w := 0.0                 # width each column of controls takes, landscape only
 var last_painted := Vector2i(-1, -1)
 
 # geometry, recomputed per puzzle
@@ -201,6 +215,11 @@ func _ready() -> void:
 		_logic_test()
 		return
 	_apply_layout()
+	# A phone rotating arrives as a window resize, in the browser and on
+	# Android alike, so that is the whole trigger.
+	var win := get_window()
+	if win != null and not win.size_changed.is_connected(_on_window_resized):
+		win.size_changed.connect(_on_window_resized)
 	_load_puzzle(index)
 	if layout_audit:
 		await _audit_all()
@@ -538,6 +557,10 @@ func _parse_args() -> void:
 				shot_press = true
 			"--zen":
 				mode = MODE_ZEN
+			"--landscape":
+				orient_force = 2
+			"--portrait":
+				orient_force = 1
 
 
 func _load_puzzles() -> void:
@@ -625,18 +648,50 @@ func _load_puzzle(i: int) -> void:
 	queue_redraw()
 
 
+func _window_is_landscape() -> bool:
+	## The real window, not the design viewport -- the design viewport is what
+	## this decides. A headless run has no window, so it answers portrait
+	## unless something has asked for the other one.
+	if orient_force != 0:
+		return orient_force == 2
+	var win := get_window()
+	if win == null:
+		return false
+	var sz := win.size
+	if sz.x <= 0 or sz.y <= 0:
+		return false
+	return sz.x > sz.y
+
+
+func _on_window_resized() -> void:
+	## A phone turning is just a resize. Only an actual flip is worth rebuilding
+	## for; every other resize is handled by the stretch, and reacting to those
+	## too would rebuild the board on every drag of a desktop window edge.
+	if _window_is_landscape() != landscape:
+		_apply_layout()
+
+
 func _apply_layout() -> void:
-	## Set up the handful of numbers the drawing works from. This was a switch
-	## over seven variants; now it is just the arrangement, stated once.
-	VW = 760.0
-	VH = 1080.0
+	## Set up the handful of numbers the drawing works from, for whichever way
+	## up we are.
+	landscape = _window_is_landscape()
+	if landscape:
+		VW = 1080.0
+		VH = 760.0
+		ctrl_h = SIDE_FOOT
+		side_w = SIDE_W
+		head_h = HEAD_H_LAND
+	else:
+		VW = 760.0
+		VH = 1080.0
+		ctrl_h = CTRL_H
+		side_w = 0.0
+		head_h = HEAD_H
+	banner_gap = BANNER_GAP
+
 	var win := get_window()
 	if win != null:
 		win.content_scale_size = Vector2i(int(VW), int(VH))
-
-	head_h = HEAD_H
-	ctrl_h = CTRL_H
-	banner_gap = BANNER_GAP
 	if W > 0:
 		_layout()
 	queue_redraw()
@@ -649,7 +704,7 @@ func _banner_rect() -> Rect2:
 
 
 func _layout() -> void:
-	var avail_w := VW - 40.0
+	var avail_w := VW - 40.0 - side_w * 2.0
 	var top := head_h
 	var avail_h := (VH - ctrl_h - banner_gap) - top
 
@@ -663,7 +718,7 @@ func _layout() -> void:
 	if font == null:          # headless logic runs have no font to measure
 		cell = min((avail_w - gutter_l - gutter_r) / float(W),
 				(avail_h - gutter_t - gutter_b) / float(H))
-		origin = Vector2(20.0 + gutter_l, top + gutter_t)
+		origin = Vector2(20.0 + side_w + gutter_l, top + gutter_t)
 		gutter = gutter_l
 		return
 	for _pass in 2:
@@ -694,7 +749,7 @@ func _layout() -> void:
 	var board_w := cell * W
 	var board_h := cell * H
 	origin = Vector2(
-			20.0 + (avail_w - (board_w + gutter_l + gutter_r)) * 0.5 + gutter_l,
+			20.0 + side_w + (avail_w - (board_w + gutter_l + gutter_r)) * 0.5 + gutter_l,
 			top + (avail_h - (board_h + gutter_t + gutter_b)) * 0.5 + gutter_t)
 	gutter = gutter_l
 
@@ -1182,6 +1237,16 @@ func _draw_header() -> void:
 	## Tight: one title line, one status strip, then the flow line. The full
 	## header with its tagline and separate clock, and the chip strip, went
 	## with the variants.
+	if landscape:
+		# Turned sideways the screen is short, and height is exactly what the
+		# board is short of -- so the same three things go in one strip along
+		# the top instead of three stacked lines. That is 60px back into the
+		# board, which on a 10x10 is most of a cell per row.
+		_text_l("PIPEGRAM", Vector2(20.0, 30.0), 20, C_ACCENT)
+		_text_r(_status_text(), Vector2(VW - 20.0, 30.0), 15,
+				C_GOOD if solved else C_TEXT_DIM)
+		_draw_flow_line(54.0, 14)
+		return
 	_text_c("PIPEGRAM", Vector2(VW * 0.5, 32), 26, C_ACCENT)
 	_text_c(_status_text(), Vector2(VW * 0.5, 58), 15,
 			C_GOOD if solved else C_TEXT_DIM)
@@ -1601,7 +1666,10 @@ func _tip_text() -> String:
 
 func _draw_controls() -> void:
 	buttons.clear()
-	_chrome_panel(VH - ctrl_h)
+	if landscape:
+		_chrome_side()
+	else:
+		_chrome_panel(VH - ctrl_h)
 
 
 func _palette_row(x: float, y: float, w: float, h: float) -> void:
@@ -1611,6 +1679,32 @@ func _palette_row(x: float, y: float, w: float, h: float) -> void:
 	for i in n:
 		_tool_button(Rect2(x + float(i) * (tw + gap), y, tw, h), i)
 
+
+
+func _chrome_side() -> void:
+	## Landscape: pipe and no-pipe down the left edge, the utilities down the
+	## right, board in the middle where both thumbs reach it. A panel across
+	## the foot would take a quarter of a 760px-tall screen.
+	var y := head_h + 6.0
+	var avail := VH - y - SIDE_FOOT
+	var nt := TOOL_NAMES.size()
+	# Two tools stretched down a whole column would be a pair of enormous
+	# slabs. Cap them and centre the pair instead, so they land under a thumb
+	# rather than filling the edge for the sake of it.
+	var hgt := minf(130.0, avail / float(nt) - 6.0)
+	var block := hgt * float(nt) + 6.0 * float(nt - 1)
+	var ty := y + (avail - block) * 0.5
+	for i in nt:
+		_tool_button(Rect2(14.0, ty + float(i) * (hgt + 6.0), SIDE_W - 28.0, hgt),
+				i, true, 30.0)
+	var items := _nav_items()
+	var hgt2 := avail / float(items.size()) - 6.0
+	for i in items.size():
+		_button(Rect2(VW - SIDE_W + 14.0, y + float(i) * (hgt2 + 6.0),
+				SIDE_W - 28.0, hgt2),
+				str(items[i][0]), str(items[i][1]), bool(items[i][2]), false, 14)
+	_text_c(_tip_text(), Vector2(VW * 0.5, VH - 30.0), 14, C_TEXT_DIM)
+	_text_c(RULE_LINE, Vector2(VW * 0.5, VH - 10.0), 12, C_TEXT_DONE)
 
 
 func _chrome_panel(top: float) -> void:
@@ -1825,16 +1919,23 @@ func _audit_all() -> void:
 	## 10x10 ask very different things of the same furniture, and the gutters
 	## are sized by measuring real clue text. So every puzzle in the set is
 	## checked, rather than one sample of it against seven layouts.
-	print("auditing the arrangement over %d puzzles" % puzzles.size())
+	print("auditing the arrangement over %d puzzles, both ways up" % puzzles.size())
 	var faults := 0
-	for i in puzzles.size():
-		_load_puzzle(i)
-		_apply_layout()
-		queue_redraw()
-		await RenderingServer.frame_post_draw
-		await RenderingServer.frame_post_draw
-		faults += _layout_audit("%s %dx%d"
-				% [str(puzzles[i].get("name", str(i))), W, H]).size()
+	for want_land in [false, true]:
+		orient_force = 2 if want_land else 1
+		print("")
+		print("  --- %s ---" % ("landscape" if want_land else "portrait"))
+		for i in puzzles.size():
+			_load_puzzle(i)
+			_apply_layout()
+			queue_redraw()
+			await RenderingServer.frame_post_draw
+			await RenderingServer.frame_post_draw
+			faults += _layout_audit("%s %dx%d"
+					% [str(puzzles[i].get("name", str(i))), W, H]).size()
+	orient_force = 0
+	_apply_layout()
+	await RenderingServer.frame_post_draw
 
 	# An audit that cannot fail proves nothing, so plant two faults it must
 	# catch -- one rect off the edge, one too small to hit -- and check it
@@ -1856,7 +1957,7 @@ func _audit_all() -> void:
 
 	print("")
 	if faults == 0:
-		print("%d puzzles, no geometry faults" % puzzles.size())
+		print("%d puzzles x 2 orientations, no geometry faults" % puzzles.size())
 	else:
 		print("%d geometry fault(s) over %d puzzles" % [faults, puzzles.size()])
 	get_tree().quit(1 if faults > 0 else 0)

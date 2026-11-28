@@ -19,7 +19,9 @@ window/size/window_width_override=570
 window/size/window_height_override=810
 window/stretch/mode="canvas_items"
 window/stretch/aspect="keep"
-window/handheld/orientation=1
+; 6 = Sensor: the game follows the phone, and Main.gd rebuilds the
+; arrangement sideways when the window comes back landscape.
+window/handheld/orientation=6
 
 [rendering]
 

@@ -20,3 +20,6 @@ shot blank
 shot flow     --flow
 shot pressure --pressure
 shot solved   --solved
+# and the same game turned sideways
+shot land-blank "--landscape"
+shot land-flow  "--landscape --flow"
