@@ -114,56 +114,45 @@ it**, and both are built facing the direction the pipe actually runs. That first
 and last joint is given to you, so read it off the spigots and you have two
 footholds before you start. Clue numbers grey out as that line is satisfied.
 
-### Layouts
+### The arrangement
 
-**The arrangement** was picked by building the alternatives and comparing them.
-It is a tight header, the two tools raised on their own panel, the board grown
-into the dead win/lose strip, and the pressure countdown drawn as a ring around
-the water's head rather than a bar up top. On a 6×6 that is a 104 px cell
-against the original's 88 px.
+There is **one** screen arrangement. It was picked by building seven
+alternatives, playing them against each other, and then deleting them: a tight
+header, the two tools raised on their own panel, the board grown into the dead
+win/lose strip so the banner overlays it when it is needed, and the Flow
+countdown drawn as a ring around the water's head rather than a bar up top.
 
-It lives in one place, `BASE` at the top of `scripts/Main.gd`. A layout variant
-is `BASE` with the few keys it names overridden, so a variant only says what it
-changes — and there is a single place to change what the arrangement *is*. The
-defaults used to be written out at each lookup, which meant the same answer was
-spelled in nine places and could drift apart.
+Against the first arrangement that is a 104 px cell instead of 88 px on a 6×6,
+and the countdown sits where your eyes already are.
 
-`L` (or the **Layouts** button) opens a picker with the arrangement and seven
-alternatives. `[` and `]` step through them without opening the picker, so you
-can compare two on the same board mid-puzzle.
+The four numbers that make it are named constants at the top of
+`scripts/Main.gd` — `HEAD_H`, `CTRL_H`, `BANNER_GAP`, and the ring — so the
+decision can be found and argued with rather than inferred from drawing code.
+The variants, the picker, the `L` / `[` / `]` keys and the six unused chrome
+builders are gone: about 340 lines.
 
-| | |
-|---|---|
-| **The original arrangement** | what it looked like before the choice: full header, plain button rows, a separate win strip, countdown up top. Kept so the two can be flipped between |
-| **Thumb pad** | every control on a pad under your thumb, nothing along the top |
-| **Clue rails all round** | clues on all four sides, so you never read a long line across the whole board |
-| **Board first** | the board fills the screen; the controls slide up when you want them |
-| **No palette, tap to cycle** | no palette at all — a tap cycles blank → pipe → crossed off. With two states there is nothing to aim at |
-| **Workbench** | a blueprint on a bench, the two marks in a parts tray, a pressure gauge for a bar |
-
-One is a different orientation: **Landscape, two-handed** swaps the viewport to
-1080×760 and puts the two marks under your left thumb and the utilities under
-your right. That is the honest fix for playing Expert on a phone.
-
-To compare them all at once:
+To look at every state the board has:
 
 ```bash
-heavy tools/shots.sh /tmp/pipegram-shots 6 flow
+heavy tools/shots.sh /tmp/pipegram-shots 6
 ```
 
-A layout's faults are geometric, and they are tedious and unreliable to catch by
-eye across eight screenshots, so the geometry is checked instead:
+The faults an arrangement produces are geometric, and tedious and unreliable to
+catch by eye, so the geometry is checked instead:
 
 ```bash
 godot --path . -- --layoutaudit --puzzle 6
 ```
 
-For every layout, with the picker shut and open, it checks that the board, the
+With one arrangement the thing that varies is the **board**: a 5×5 and a 10×10
+ask very different things of the same furniture, and the clue gutters are sized
+by measuring real text. So it now runs over **every puzzle in the set** rather
+than one sample against seven layouts. For each it checks that the board, the
 win banner and every button sit inside the viewport, that no control overlaps
 the board or another control, that the grid stays out of the bands the header
-and the controls reserve, and that nothing has shrunk below the size a thumb can
-hit. It needs a window rather than `--headless`, because the clue gutters are
-sized by measuring real text and there is no font to measure without one.
+and the controls reserve, and that nothing has shrunk below the size a thumb
+can hit. It needs a window rather than `--headless`, because there is no font
+to measure without one.
 
 It ends by planting two faults it must catch — one rect off the edge, one too
 small to hit — and failing if it misses them, because a clean run from a check
@@ -296,6 +285,10 @@ do first:
 - Puzzles are a fixed baked set; generation does not run in-game.
 - Touch is playable but not polished: no drag threshold, so a sloppy tap can
   paint two cells, and there is no pinch-zoom on the bigger grids.
+- Portrait only. The landscape arrangement was deleted with the other variants,
+  and it was the honest fix for the big grids on a phone: an Expert 10×10 is a
+  65 px cell in portrait, playable but tight. If a playtest says Expert on a
+  phone matters, landscape comes back as a real mode rather than a variant.
 - Difficulty is just grid size. Real difficulty wants a measure of *how hard
   the deduction chain is*, not how big the board is.
 

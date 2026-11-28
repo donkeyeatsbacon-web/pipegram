@@ -1,36 +1,22 @@
 #!/usr/bin/env bash
-# Grab one screenshot per layout variant, so they can be compared side by side
-# without clicking through the picker.
+# Grab a still of the board in each state worth looking at.
 #
-#   heavy tools/shots.sh [outdir] [puzzle] [state]
+#   heavy tools/shots.sh [outdir] [puzzle]
 #
-# state: flow (mid-chase, the default) | pressure | solved | blank
+# There used to be a layout per shot; there is one arrangement now, so the
+# states are what vary.
 set -u
 cd "$(dirname "$0")/.."
 OUT="${1:-/tmp/pipegram-shots}"
 PUZZLE="${2:-6}"
-STATE="${3:-flow}"
-# the layout table is the only place that knows how many there are
-COUNT="$(python3 - <<'PY'
-import re
-src = open("scripts/Main.gd").read()
-tbl = src[src.index("var LAYOUTS: Array = ["):]
-tbl = tbl[:tbl.index("\n]")]
-print(tbl.count('"name":'))
-PY
-)"
 mkdir -p "$OUT"
-EXTRA=""
-case "$STATE" in
-  flow)   EXTRA="--flow" ;;
-  solved) EXTRA="--solved" ;;
-  pressure) EXTRA="--pressure" ;;
-  blank)  EXTRA="" ;;
-esac
-echo "$COUNT layouts -> $OUT  (puzzle $PUZZLE, $STATE)"
-for i in $(seq 0 $((COUNT - 1))); do
-  f="$OUT/layout-$(printf '%02d' "$i").png"
-  godot --path . -- --screenshot "$f" --puzzle "$PUZZLE" --layout "$i" $EXTRA \
-      >/dev/null 2>&1
-  if [[ -f "$f" ]]; then echo "  ok  $f"; else echo "  FAILED layout $i"; fi
-done
+shot() {  # name, extra flag
+  local f="$OUT/$1.png"
+  godot --path . -- --screenshot "$f" --puzzle "$PUZZLE" ${2:-} >/dev/null 2>&1
+  if [[ -f "$f" ]]; then echo "  ok  $f"; else echo "  FAILED $1"; fi
+}
+echo "stills of puzzle $PUZZLE -> $OUT"
+shot blank
+shot flow     --flow
+shot pressure --pressure
+shot solved   --solved

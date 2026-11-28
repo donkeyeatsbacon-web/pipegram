@@ -21,7 +21,7 @@ extends Node2D
 ## first and last joint are given to you.
 ##
 
-var VW := 760.0            # design viewport, swapped for landscape layouts
+var VW := 760.0            # design viewport, portrait
 var VH := 1080.0
 
 # cell marks -- the fill layer
@@ -44,50 +44,23 @@ const TOOL_EMPTY := 1      # cross it off
 const MODE_ZEN := 0                # no clock, solve it in your own time
 const MODE_FLOW := 1               # the water is coming
 
-# --- layout variants -------------------------------------------------------
-# Every screen arrangement worth trying, each playable so it can be judged by
-# playing rather than by looking at a picture. Press L for the picker.
-const HDR_FULL := 0        # title, tagline, label, clue, timer, flow line
-const HDR_TIGHT := 1       # one title line plus a single status strip
-const HDR_CHIP := 2        # just a thin strip; the board takes the rest
-
-const CHROME_ROWS := 0     # palette row over a nav row -- what we have now
-const CHROME_PANEL := 1    # palette raised on a panel, nav dimmed to chrome
-const CHROME_BAR := 2      # one tool chip; the palette slides up on demand
-const CHROME_PAD := 3      # 3x3 thumb pad in the corner, nav beside it
-const CHROME_NONE := 4     # no palette at all -- the input carries it
-const CHROME_SIDE := 5     # columns down both edges, for landscape
-const CHROME_TRAY := 6     # a workbench parts tray
-
-const IN_PALETTE := 0      # pick pipe or empty, tap to place
-const IN_CYCLE := 1        # no palette: a tap cycles unknown -> pipe -> empty
+# --- the arrangement -------------------------------------------------------
+# Several screen arrangements were built and played against each other; this is
+# the one that won, and the variants and their picker are gone. What is left is
+# the four decisions that made it, written down so they can be found and argued
+# with rather than inferred from the drawing code.
+const HEAD_H := 124.0      # a tight header: one title line and a status strip
+const CTRL_H := 182.0      # the two tools raised on their own panel
+const BANNER_GAP := 0.0    # no reserved win/lose strip -- the board takes it,
+                           # and the banner overlays the board when it is needed
+# ...and the Flow countdown is drawn as a ring around the water's head rather
+# than a bar in the header. On a 6x6 this is a 104px cell against the 88px the
+# first arrangement managed.
 
 const TOOL_NAMES := ["pipe", "empty"]
 const TOOL_ACTIONS := ["tool_pipe", "tool_empty"]
 const RULE_LINE := "the pipe never runs alongside itself — touching pipe cells are always joined"
 
-var LAYOUTS: Array = [
-	{"name": "As it is now", "tier": "the arrangement",
-	 "note": "tight header, tools on their own panel, board grown into the win strip, pressure ring"},
-	{"name": "The original arrangement", "tier": "to compare against",
-	 "hdr": HDR_FULL, "chrome": CHROME_ROWS, "grow": false, "ring": false,
-	 "note": "what it looked like before: full header, plain button rows, countdown up top"},
-	{"name": "Thumb pad", "tier": "buttons moved", "chrome": CHROME_PAD,
-	 "note": "every button in one block under your thumb, nothing up top"},
-	{"name": "Clue rails all round", "tier": "board changed", "rails": true,
-	 "note": "clues repeated right and bottom so one is always near your work"},
-	{"name": "Board first", "tier": "board changed",
-	 "hdr": HDR_CHIP, "chrome": CHROME_BAR,
-	 "note": "board fills the screen; the controls slide up when you want them"},
-	{"name": "Landscape, two-handed", "tier": "turned sideways",
-	 "land": true, "chrome": CHROME_SIDE,
-	 "note": "board centred, tools under the left thumb, utilities right"},
-	{"name": "No palette, tap to cycle", "tier": "input changed",
-	 "input": IN_CYCLE, "chrome": CHROME_NONE,
-	 "note": "a tap cycles blank → pipe → crossed off; no palette to aim at"},
-	{"name": "Workbench", "tier": "dressed up", "chrome": CHROME_TRAY,
-	 "note": "blueprint on a bench, tools in a parts tray, a pressure gauge"},
-]
 
 
 # Flow timings. These are the dials to turn after a playtest: they decide
@@ -181,15 +154,10 @@ var burst_leak := false            # a leak, rather than the pressure
 var show_errors := false
 var hint_cells: Dictionary = {}    # cells given away by Hint
 
-# the active layout
-var layout := 0
 var L: Dictionary = {}
 var head_h := 208.0               # height the header reserves
 var ctrl_h := 176.0               # height the controls reserve at the bottom
 var banner_gap := 90.0            # the strip the win/lose banner sits in
-var side_w := 0.0                 # columns down each edge, for landscape
-var picking := false              # the layout picker is open
-var bar_open := false             # CHROME_BAR: the palette is slid up
 var last_painted := Vector2i(-1, -1)
 
 # geometry, recomputed per puzzle
@@ -570,9 +538,6 @@ func _parse_args() -> void:
 				shot_press = true
 			"--zen":
 				mode = MODE_ZEN
-			"--layout":
-				if i + 1 < args.size():
-					layout = int(args[i + 1])
 
 
 func _load_puzzles() -> void:
@@ -660,80 +625,18 @@ func _load_puzzle(i: int) -> void:
 	queue_redraw()
 
 
-# The arrangement the game ships with, chosen after comparing the variants: a
-# tight header, the two tools raised on their own panel, the board grown into
-# the dead win strip, and the pressure countdown drawn around the water's head.
-#
-# A layout variant is this with the few keys it names overridden, so a variant
-# only has to say what it changes -- and there is exactly one place to change
-# what "the arrangement" means. These used to be defaults written out at each
-# lookup, which meant the same answer was spelled in nine places.
-const BASE := {
-	"land": false,
-	"hdr": HDR_TIGHT,
-	"chrome": CHROME_PANEL,
-	"input": IN_PALETTE,
-	"grow": true,
-	"ring": true,
-	"rails": false,
-}
-
-
-func _lay(key: String) -> Variant:
-	return L.get(key, BASE[key])        # an unknown key is a bug, not a default
-
-
-func _chrome() -> int:
-	return int(_lay("chrome"))
-
-
-func _input_mode() -> int:
-	return int(_lay("input"))
-
-
 func _apply_layout() -> void:
-	## Turn the chosen variant into the handful of numbers the rest of the
-	## drawing works from. Nothing below here knows a layout's name.
-	layout = wrapi(layout, 0, LAYOUTS.size())
-	L = LAYOUTS[layout]
-
-	if bool(_lay("land")):
-		VW = 1080.0
-		VH = 760.0
-	else:
-		VW = 760.0
-		VH = 1080.0
+	## Set up the handful of numbers the drawing works from. This was a switch
+	## over seven variants; now it is just the arrangement, stated once.
+	VW = 760.0
+	VH = 1080.0
 	var win := get_window()
 	if win != null:
 		win.content_scale_size = Vector2i(int(VW), int(VH))
 
-	match int(_lay("hdr")):
-		HDR_TIGHT: head_h = 124.0
-		HDR_CHIP: head_h = 58.0
-		_: head_h = 208.0
-
-	side_w = 0.0
-	banner_gap = 0.0 if bool(_lay("grow")) else 90.0
-	match _chrome():
-		CHROME_PANEL: ctrl_h = 182.0
-		CHROME_BAR:
-			ctrl_h = 66.0
-			banner_gap = 0.0
-		CHROME_PAD:
-			ctrl_h = 240.0
-			banner_gap = 0.0
-		CHROME_NONE: ctrl_h = 92.0
-		CHROME_SIDE:
-			# 54 of these are the tip and rule lines at the foot of the screen.
-			# Declaring 0 let the board run to the very edge and the text then
-			# landed on its bottom row.
-			ctrl_h = 54.0
-			side_w = 172.0
-			banner_gap = 0.0
-		CHROME_TRAY: ctrl_h = 174.0
-		_: ctrl_h = 176.0
-
-	bar_open = false
+	head_h = HEAD_H
+	ctrl_h = CTRL_H
+	banner_gap = BANNER_GAP
 	if W > 0:
 		_layout()
 	queue_redraw()
@@ -746,21 +649,21 @@ func _banner_rect() -> Rect2:
 
 
 func _layout() -> void:
-	var avail_w := VW - 40.0 - side_w * 2.0
+	var avail_w := VW - 40.0
 	var top := head_h
 	var avail_h := (VH - ctrl_h - banner_gap) - top
-	var rails: bool = bool(_lay("rails"))
 
 	# The gutters have to hold the longest clue in either direction, so size
-	# the cells and the gutters together: two passes settle it.
+	# the cells and the gutters together: two passes settle it. Clues sit left
+	# and top only; the variant that repeated them right and bottom is gone.
 	gutter_l = 86.0
 	gutter_t = 86.0
-	gutter_r = 86.0 if rails else 0.0
-	gutter_b = 86.0 if rails else 0.0
+	gutter_r = 0.0
+	gutter_b = 0.0
 	if font == null:          # headless logic runs have no font to measure
 		cell = min((avail_w - gutter_l - gutter_r) / float(W),
 				(avail_h - gutter_t - gutter_b) / float(H))
-		origin = Vector2(20.0 + side_w + gutter_l, top + gutter_t)
+		origin = Vector2(20.0 + gutter_l, top + gutter_t)
 		gutter = gutter_l
 		return
 	for _pass in 2:
@@ -786,13 +689,12 @@ func _layout() -> void:
 
 		gutter_l = clampf(widest + 26.0, 54.0, 150.0)
 		gutter_t = clampf(14.0 + tallest * (clue_font + 3.0) + 8.0, 54.0, 150.0)
-		gutter_r = gutter_l if rails else 0.0
-		gutter_b = gutter_t if rails else 0.0
+
 
 	var board_w := cell * W
 	var board_h := cell * H
 	origin = Vector2(
-			20.0 + side_w + (avail_w - (board_w + gutter_l + gutter_r)) * 0.5 + gutter_l,
+			20.0 + (avail_w - (board_w + gutter_l + gutter_r)) * 0.5 + gutter_l,
 			top + (avail_h - (board_h + gutter_t + gutter_b)) * 0.5 + gutter_t)
 	gutter = gutter_l
 
@@ -1027,21 +929,7 @@ func _cell_from_point(p: Vector2) -> Vector2i:
 	return c if _in_grid(c) else Vector2i(-1, -1)
 
 
-func _cycle_cell(c: Vector2i, by: int) -> void:
-	## No palette: a tap walks the cell round blank -> pipe -> crossed off.
-	if _is_given(c):
-		return
-	var order := [UNKNOWN, PIPE, BLOCKED]
-	var at: int = order.find(_mark_at(c))
-	_set_fill(c, int(order[posmod((at if at >= 0 else 0) + by, order.size())]))
-
-
 func _press_cell(c: Vector2i, secondary: bool, _at: Vector2) -> void:
-	if _input_mode() == IN_CYCLE:
-		_cycle_cell(c, -1 if secondary else 1)
-		drag_fill = -2
-		return
-
 	var want: int = PIPE if tool == TOOL_PIPE else BLOCKED
 	if secondary:
 		want = BLOCKED if want == PIPE else PIPE
@@ -1075,16 +963,6 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton:
 		mouse = get_global_mouse_position()
 		var mb := event as InputEventMouseButton
-		if picking:
-			# the picker owns the screen while it is open
-			if mb.pressed:
-				for b in buttons:
-					if (b["rect"] as Rect2).has_point(mouse):
-						_do_action(b["action"])
-						return
-				picking = false
-				queue_redraw()
-			return
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
 			for b in buttons:
 				if (b["rect"] as Rect2).has_point(mouse):
@@ -1118,13 +996,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		match (event as InputEventKey).keycode:
 			KEY_1: _do_action("tool_pipe")
 			KEY_2: _do_action("tool_empty")
-			KEY_L: _do_action("layouts")
-			KEY_BRACKETLEFT:
-				layout -= 1
-				_apply_layout()
-			KEY_BRACKETRIGHT:
-				layout += 1
-				_apply_layout()
 			KEY_R: _do_action("reset")
 			KEY_N, KEY_RIGHT: _do_action("next")
 			KEY_P, KEY_LEFT: _do_action("prev")
@@ -1145,18 +1016,7 @@ func _after_change() -> void:
 
 
 func _do_action(a: String) -> void:
-	if a.begins_with("pick_"):
-		layout = int(a.substr(5))
-		picking = false
-		_apply_layout()
-		return
 	match a:
-		"layouts":
-			picking = not picking
-			queue_redraw()
-		"bar":
-			bar_open = not bar_open
-			queue_redraw()
 		"undo": _undo()
 		"prev": _load_puzzle(index - 1)
 		"next": _load_puzzle(index + 1)
@@ -1256,12 +1116,8 @@ func _process(delta: float) -> void:
 #  drawing
 # =========================================================================
 
-func _blueprint() -> bool:
-	return _chrome() == CHROME_TRAY
-
-
 func _draw() -> void:
-	draw_rect(Rect2(0, 0, VW, VH), C_BENCH if _blueprint() else C_BG, true)
+	draw_rect(Rect2(0, 0, VW, VH), C_BG, true)
 	if puzzles.is_empty():
 		_text_c("No puzzles. Run: heavy python3 tools/generate.py",
 				Vector2(VW * 0.5, VH * 0.5), 20, C_BAD)
@@ -1275,8 +1131,7 @@ func _draw() -> void:
 		_draw_water()
 	_draw_flanges()
 	_draw_taps()
-	if bool(_lay("ring")):
-		_draw_pressure_ring()
+	_draw_pressure_ring()
 	if lost:
 		_draw_burst()
 	_draw_controls()
@@ -1284,8 +1139,6 @@ func _draw() -> void:
 		_draw_banner()
 	elif lost:
 		_draw_lost_banner()
-	if picking:
-		_draw_picker()
 
 
 # ---- header --------------------------------------------------------------
@@ -1321,37 +1174,18 @@ func _draw_flow_line(y: float, size := 17) -> void:
 		return
 	_text_c("PRESSURE BUILDING — %.1f s" % pressure_left, Vector2(VW * 0.5, y),
 			size + 1, C_BAD)
-	if bool(_lay("ring")):
-		return                        # the ring on the board carries it
-	var frac := clampf(pressure_left / PRESSURE_SECONDS, 0.0, 1.0)
-	var bw := 300.0
-	var br := Rect2(VW * 0.5 - bw * 0.5, y + 7.0, bw, 6.0)
-	draw_rect(br, C_PANEL, true)
-	draw_rect(Rect2(br.position, Vector2(bw * frac, br.size.y)), C_BAD, true)
+	# The countdown itself is the ring drawn round the water's head, so there
+	# is no bar here any more -- only the words.
 
 
 func _draw_header() -> void:
-	match int(_lay("hdr")):
-		HDR_TIGHT:
-			_text_c("PIPEGRAM", Vector2(VW * 0.5, 32), 26, C_ACCENT)
-			_text_c(_status_text(), Vector2(VW * 0.5, 58), 15,
-					C_GOOD if solved else C_TEXT_DIM)
-			_draw_flow_line(106)
-		HDR_CHIP:
-			draw_rect(Rect2(0, 0, VW, 46), C_PANEL, true)
-			_text_l("PIPEGRAM", Vector2(20, 30), 18, C_ACCENT)
-			_text_r(_status_text(), Vector2(VW - 20, 16), 14, C_TEXT_DIM)
-			_draw_flow_line(70, 14)
-		_:
-			_text_c("PIPEGRAM", Vector2(VW * 0.5, 50), 36, C_ACCENT)
-			_text_c("lay the pipe by the numbers", Vector2(VW * 0.5, 76), 16,
-					C_TEXT_DIM)
-			_text_c(_status_text(), Vector2(VW * 0.5, 112), 18, C_TEXT)
-			var mins := int(elapsed) / 60
-			var secs := int(elapsed) % 60
-			_text_c("%d:%02d" % [mins, secs], Vector2(VW * 0.5, 166), 16,
-					C_GOOD if solved else C_TEXT_DIM)
-			_draw_flow_line(190)
+	## Tight: one title line, one status strip, then the flow line. The full
+	## header with its tagline and separate clock, and the chip strip, went
+	## with the variants.
+	_text_c("PIPEGRAM", Vector2(VW * 0.5, 32), 26, C_ACCENT)
+	_text_c(_status_text(), Vector2(VW * 0.5, 58), 15,
+			C_GOOD if solved else C_TEXT_DIM)
+	_draw_flow_line(106)
 
 
 func _draw_pressure_ring() -> void:
@@ -1380,7 +1214,7 @@ func _draw_clues() -> void:
 	# panel behind the clue gutters
 	draw_rect(Rect2(origin.x - gutter_l, origin.y - gutter_t,
 			board_w + gutter_l + gutter_r, board_h + gutter_t + gutter_b),
-			C_BP_PANEL if _blueprint() else C_PANEL, true)
+			C_PANEL, true)
 
 	for y in H:
 		var clue: Array = row_clues[y]
@@ -1433,8 +1267,6 @@ func _draw_cells() -> void:
 			var c := Vector2i(x, y)
 			var r := Rect2(origin.x + x * cell, origin.y + y * cell, cell, cell)
 			var base := C_CELL if (x + y) % 2 == 0 else C_CELL_ALT
-			if _blueprint():
-				base = C_BP_CELL if (x + y) % 2 == 0 else C_BP_ALT
 			if hover == c and not solved:
 				base = base.lightened(0.10)
 			draw_rect(r, base, true)
@@ -1749,7 +1581,6 @@ func _nav_items() -> Array:
 	return [
 		["‹ Prev", "prev", false], ["Reset", "reset", false], ["Hint", "hint", false],
 		[mode_label, "mode", mode_off], ["Next ›", "next", false],
-		["Layouts", "layouts", false],
 	]
 
 
@@ -1763,8 +1594,6 @@ func _draw_nav_row(y: float, h: float, fsize: int, dim: bool) -> void:
 
 
 func _tip_text() -> String:
-	if _input_mode() == IN_CYCLE:
-		return "tap a cell to cycle it: blank → pipe → crossed off"
 	if tool == TOOL_PIPE:
 		return "tap to lay pipe · the shape follows the joints it makes"
 	return "cross off a cell the pipe cannot run through"
@@ -1772,15 +1601,7 @@ func _tip_text() -> String:
 
 func _draw_controls() -> void:
 	buttons.clear()
-	var top := VH - ctrl_h
-	match _chrome():
-		CHROME_PANEL: _chrome_panel(top)
-		CHROME_BAR: _chrome_bar()
-		CHROME_PAD: _chrome_pad(top)
-		CHROME_NONE: _chrome_none(top)
-		CHROME_SIDE: _chrome_side()
-		CHROME_TRAY: _chrome_tray(top)
-		_: _chrome_rows(top)
+	_chrome_panel(VH - ctrl_h)
 
 
 func _palette_row(x: float, y: float, w: float, h: float) -> void:
@@ -1790,12 +1611,6 @@ func _palette_row(x: float, y: float, w: float, h: float) -> void:
 	for i in n:
 		_tool_button(Rect2(x + float(i) * (tw + gap), y, tw, h), i)
 
-
-func _chrome_rows(top: float) -> void:
-	_palette_row(20.0, top + 2.0, VW - 40.0, 64.0)
-	_text_c(_tip_text(), Vector2(VW * 0.5, top + 84.0), 14, C_TEXT_DIM)
-	_draw_nav_row(top + 94.0, 44.0, 16, false)
-	_text_c(RULE_LINE, Vector2(VW * 0.5, top + 160.0), 14, C_TEXT_DONE)
 
 
 func _chrome_panel(top: float) -> void:
@@ -1811,162 +1626,9 @@ func _chrome_panel(top: float) -> void:
 	_text_c(RULE_LINE, Vector2(VW * 0.5, top + 174.0), 13, C_TEXT_DONE)
 
 
-func _chrome_bar() -> void:
-	## Board first: one chip, and the controls come up only when asked for.
-	if bar_open:
-		var panel := Rect2(14.0, VH - 236.0, VW - 28.0, 166.0)
-		draw_rect(panel, C_PANEL, true)
-		draw_rect(panel, C_ACCENT, false, 1.0)
-		_palette_row(panel.position.x + 10.0, panel.position.y + 10.0,
-				panel.size.x - 20.0, 66.0)
-		_draw_nav_row(panel.position.y + 88.0, 38.0, 14, true)
-		_text_c(_tip_text(), Vector2(VW * 0.5, panel.position.y + 150.0), 13,
-				C_TEXT_DIM)
-	var chip := Rect2(20.0, VH - 58.0, VW - 40.0, 46.0)
-	draw_rect(chip, C_BTN_HOT if chip.has_point(mouse) else C_BTN, true)
-	draw_rect(chip, C_ACCENT, false, 1.0)
-	_draw_mini(chip.position + Vector2(32.0, 23.0), 30.0, tool)
-	_text_l(TOOL_NAMES[tool], chip.position + Vector2(60.0, 29.0), 17, C_TEXT)
-	_text_r("close ⌄" if bar_open else "controls ⌃",
-			Vector2(chip.end.x - 14.0, chip.position.y + 14.0), 15, C_TEXT_DIM)
-	buttons.append({"rect": chip, "action": "bar"})
 
 
-func _chrome_pad(top: float) -> void:
-	## A thumb pad in the corner: the nine things you actually reach for, where
-	## your thumb already is, and the board keeps everything above it.
-	var sz := 72.0
-	var gap := 6.0
-	var pad := Vector2(VW - 20.0 - (sz * 3.0 + gap * 2.0), top + 6.0)
-	var slots := [
-		[TOOL_PIPE, ""], [TOOL_EMPTY, ""], [-1, "undo"],
-		[-1, "hint"], [-1, "prev"], [-1, "next"],
-		[-1, "reset"], [-1, "mode"], [-1, "layouts"],
-	]
-	var extra := ["undo", "hint", "prev", "next", "reset", "mode", "layouts"]
-	var ei := 0
-	for i in 9:
-		var r := Rect2(pad + Vector2(float(i % 3) * (sz + gap),
-				float(i / 3) * (sz + gap)), Vector2(sz, sz))
-		var t: int = slots[i][0]
-		if t >= 0:
-			_tool_button(r, t, true, 30.0)
-		else:
-			var label := str(slots[i][1])
-			_button(r, label, extra[ei], false, false, 14)
-			ei += 1
-	var left_w := pad.x - 30.0
-	var items := _nav_items()
-	for i in 4:
-		var r := Rect2(20.0 + float(i % 2) * (left_w * 0.5 + 6.0),
-				top + 6.0 + float(i / 2) * 62.0, left_w * 0.5 - 6.0, 56.0)
-		_button(r, str(items[i][0]), str(items[i][1]), bool(items[i][2]), false, 15)
-	_text_c(_tip_text(), Vector2(20.0 + left_w * 0.5, top + 156.0), 13, C_TEXT_DIM)
 
-
-func _chrome_none(top: float) -> void:
-	## No palette: a tap cycles the cell itself, so there is nothing to aim at.
-	_text_c(_tip_text(), Vector2(VW * 0.5, top + 20.0), 15, C_TEXT_DIM)
-	_draw_nav_row(VH - 58.0, 46.0, 16, false)
-
-
-func _chrome_side() -> void:
-	## Landscape: pipe and no-pipe under the left thumb, utilities under the
-	## right, board in the middle where both can reach it.
-	var y := head_h + 6.0
-	var avail := VH - y - 54.0
-	var nt := TOOL_NAMES.size()
-	var hgt := avail / float(nt) - 6.0
-	for i in nt:
-		_tool_button(Rect2(14.0, y + float(i) * (hgt + 6.0), 144.0, hgt), i, true, 30.0)
-	var items := _nav_items()
-	var hgt2 := avail / float(items.size()) - 6.0
-	for i in items.size():
-		_button(Rect2(VW - 158.0, y + float(i) * (hgt2 + 6.0), 144.0, hgt2),
-				str(items[i][0]), str(items[i][1]), bool(items[i][2]), false, 14)
-	_text_c(_tip_text(), Vector2(VW * 0.5, VH - 30.0), 14, C_TEXT_DIM)
-	_text_c(RULE_LINE, Vector2(VW * 0.5, VH - 10.0), 12, C_TEXT_DONE)
-
-
-func _chrome_tray(top: float) -> void:
-	## The workbench: a blueprint on a bench, the two marks lying in a parts
-	## tray, and a pressure gauge instead of a progress bar.
-	draw_rect(Rect2(0, top - 8.0, VW, 8.0), C_BENCH_DARK, true)
-	var tray := Rect2(14.0, top + 4.0, VW - 28.0, 94.0)
-	draw_rect(tray, C_BENCH_DARK, true)
-	draw_rect(tray, Color(0, 0, 0, 0.4), false, 2.0)
-
-	var g := tray.position + Vector2(52.0, 47.0)
-	draw_circle(g, 37.0, C_BENCH)
-	draw_circle(g, 31.0, Color("d9cfbd"))
-	var frac := 1.0
-	if mode == MODE_FLOW and not solved and not lost and grace_left <= 0.0:
-		frac = clampf(pressure_left / PRESSURE_SECONDS, 0.0, 1.0)
-	for i in 7:
-		var a := PI * 0.75 + float(i) / 6.0 * PI * 1.5
-		var dv := Vector2(cos(a), sin(a))
-		draw_line(g + dv * 21.0, g + dv * 27.0, C_BENCH_DARK, 2.0, true)
-	var ang := PI * 0.75 + (1.0 - frac) * PI * 1.5
-	draw_line(g, g + Vector2(cos(ang), sin(ang)) * 25.0, C_BAD, 3.0, true)
-	draw_circle(g, 4.0, C_BENCH_DARK)
-
-	var sx := tray.position.x + 100.0
-	var sw := (tray.size.x - 110.0) / float(TOOL_NAMES.size())
-	for i in TOOL_NAMES.size():
-		var r := Rect2(sx + float(i) * sw + 4.0, tray.position.y + 8.0,
-				sw - 8.0, 78.0)
-		draw_rect(r, Color(0, 0, 0, 0.35), true)
-		var on: bool = tool == i
-		if on or r.has_point(mouse):
-			draw_rect(r, C_ACCENT if on else C_GRID_BOLD, false, 2.0)
-		_draw_mini(r.position + Vector2(r.size.x * 0.5, 30.0), 34.0, i)
-		_text_c(TOOL_NAMES[i], r.position + Vector2(r.size.x * 0.5, 68.0), 12,
-				Color("d9cfbd") if on else C_TEXT_DIM)
-		buttons.append({"rect": r, "action": TOOL_ACTIONS[i]})
-
-	_draw_nav_row(top + 106.0, 38.0, 14, true)
-	_text_c(_tip_text(), Vector2(VW * 0.5, top + 164.0), 13, Color("8a7c66"))
-
-
-# ---- the layout picker -----------------------------------
-
-func _draw_picker() -> void:
-	buttons.clear()
-	draw_rect(Rect2(0, 0, VW, VH), Color(0, 0, 0, 0.74), true)
-
-	# The panel is sized to its contents rather than to the screen. It used to
-	# be the full height whatever was in it, which left a hand-span of dead
-	# space under the last row once the fitting layouts went.
-	var cols := 2
-	var rows := int(ceil(float(LAYOUTS.size()) / float(cols)))
-	var avail := VH - 72.0
-	var gh := minf(58.0, (avail - 180.0) / float(rows))
-	var ph := minf(avail, 78.0 + float(rows) * (gh + 6.0) + 76.0)
-	var panel := Rect2(20.0, (VH - ph) * 0.5, VW - 40.0, ph)
-	draw_rect(panel, C_PANEL, true)
-	draw_rect(panel, C_ACCENT, false, 2.0)
-	_text_c("LAYOUTS — tap one to play it", Vector2(VW * 0.5, panel.position.y + 34.0),
-			22, C_ACCENT)
-	_text_c("L closes this · [ and ] step through them while you play",
-			Vector2(VW * 0.5, panel.position.y + 58.0), 14, C_TEXT_DIM)
-
-	var gw := (panel.size.x - 50.0) / float(cols)
-	for i in LAYOUTS.size():
-		var r := Rect2(panel.position.x + 20.0 + float(i % cols) * (gw + 10.0),
-				panel.position.y + 78.0 + float(i / cols) * (gh + 6.0), gw, gh)
-		var on: bool = i == layout
-		draw_rect(r, C_BTN_HOT if (on or r.has_point(mouse)) else C_BTN, true)
-		draw_rect(r, C_ACCENT if on else C_GRID_BOLD, false, 2.0 if on else 1.0)
-		_text_l("%d · %s" % [i, str(LAYOUTS[i].get("name", "?"))],
-				r.position + Vector2(12.0, 24.0), 15, C_TEXT if on else C_TEXT_DIM)
-		_text_l(str(LAYOUTS[i].get("tier", "")),
-				r.position + Vector2(12.0, 44.0), 12, C_TEXT_DONE)
-		buttons.append({"rect": r, "action": "pick_%d" % i})
-
-	_text_c(str(LAYOUTS[layout].get("note", "")),
-			Vector2(VW * 0.5, panel.end.y - 56.0), 14, C_TEXT)
-	_button(Rect2(VW * 0.5 - 90.0, panel.end.y - 44.0, 180.0, 34.0),
-			"Close", "layouts", false, false, 15)
 
 
 func _draw_burst() -> void:
@@ -2138,8 +1800,7 @@ func _layout_audit(tag: String) -> Array:
 		if r.size.x < 34.0 or r.size.y < 28.0:
 			bad.append("'%s' is only %.0fx%.0f -- too small to hit"
 					% [name, r.size.x, r.size.y])
-		# The picker is a modal sheet; it is meant to cover the board.
-		if not picking and board.intersects(r):
+		if board.intersects(r):
 			bad.append("'%s' overlaps the board" % name)
 
 	for i in buttons.size():
@@ -2160,21 +1821,20 @@ func _layout_audit(tag: String) -> Array:
 
 
 func _audit_all() -> void:
-	print("auditing %d layouts at puzzle %d (%dx%d)"
-			% [LAYOUTS.size(), index + 1, W, H])
+	## There is one arrangement now, so what varies is the board: a 5x5 and a
+	## 10x10 ask very different things of the same furniture, and the gutters
+	## are sized by measuring real clue text. So every puzzle in the set is
+	## checked, rather than one sample of it against seven layouts.
+	print("auditing the arrangement over %d puzzles" % puzzles.size())
 	var faults := 0
-	for i in LAYOUTS.size():
-		layout = i
+	for i in puzzles.size():
+		_load_puzzle(i)
 		_apply_layout()
-		var nm := str(LAYOUTS[i].get("name", str(i)))
-		for open_picker in [false, true]:
-			picking = open_picker
-			queue_redraw()
-			await RenderingServer.frame_post_draw
-			await RenderingServer.frame_post_draw
-			var tag := "%d %s%s" % [i, nm, "  +picker" if open_picker else ""]
-			faults += _layout_audit(tag).size()
-	picking = false
+		queue_redraw()
+		await RenderingServer.frame_post_draw
+		await RenderingServer.frame_post_draw
+		faults += _layout_audit("%s %dx%d"
+				% [str(puzzles[i].get("name", str(i))), W, H]).size()
 
 	# An audit that cannot fail proves nothing, so plant two faults it must
 	# catch -- one rect off the edge, one too small to hit -- and check it
@@ -2196,7 +1856,7 @@ func _audit_all() -> void:
 
 	print("")
 	if faults == 0:
-		print("%d layouts, no geometry faults" % LAYOUTS.size())
+		print("%d puzzles, no geometry faults" % puzzles.size())
 	else:
-		print("%d geometry fault(s) over %d layouts" % [faults, LAYOUTS.size()])
+		print("%d geometry fault(s) over %d puzzles" % [faults, puzzles.size()])
 	get_tree().quit(1 if faults > 0 else 0)
