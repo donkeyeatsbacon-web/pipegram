@@ -664,11 +664,22 @@ func _window_is_landscape() -> bool:
 
 
 func _on_window_resized() -> void:
-	## A phone turning is just a resize. Only an actual flip is worth rebuilding
-	## for; every other resize is handled by the stretch, and reacting to those
-	## too would rebuild the board on every drag of a desktop window edge.
-	if _window_is_landscape() != landscape:
-		_apply_layout()
+	## A phone turning is just a resize.
+	##
+	## This has to be deferred. The signal arrives while the stretch is still
+	## fitted to the old viewport, and setting the new one from inside it left
+	## the portrait viewport fitted to a landscape canvas: the whole board came
+	## out squeezed sideways, cells twice as tall as they were wide. Running at
+	## the end of the frame lets the window settle first.
+	##
+	## The guard is on the viewport we ended up with rather than on orientation
+	## alone, so a rebuild that did not take is retried instead of being
+	## remembered as done.
+	var win := get_window()
+	if _window_is_landscape() == landscape and win != null \
+			and win.content_scale_size == Vector2i(int(VW), int(VH)):
+		return
+	_apply_layout.call_deferred()
 
 
 func _apply_layout() -> void:
@@ -691,6 +702,11 @@ func _apply_layout() -> void:
 
 	var win := get_window()
 	if win != null:
+		# Re-assert the mode and the aspect with the size. Setting the size on
+		# its own is not reliably enough to make the stretch re-fit, and a
+		# stale fit is exactly the squeezed board above.
+		win.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
+		win.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
 		win.content_scale_size = Vector2i(int(VW), int(VH))
 	if W > 0:
 		_layout()
