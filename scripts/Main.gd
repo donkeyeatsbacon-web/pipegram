@@ -67,39 +67,28 @@ const TOOL_ACTIONS := ["tool_pipe", "tool_empty"]
 const RULE_LINE := "the pipe never runs alongside itself — touching pipe cells are always joined"
 
 var LAYOUTS: Array = [
-	{"name": "As it is now", "tier": "baseline",
-	 "note": "the arrangement you have been playing"},
-	{"name": "Tight header", "tier": "slight", "hdr": HDR_TIGHT,
-	 "note": "title and status on two lines — about 80px back into the board"},
-	{"name": "Clear hierarchy", "tier": "slight", "chrome": CHROME_PANEL,
-	 "note": "the two tools raised on their own panel, the rest dimmed"},
-	{"name": "Board into the banner", "tier": "slight", "grow": true,
-	 "note": "the dead win/lose strip given to the board; banner overlays it"},
-	{"name": "Bigger board, tight header", "tier": "slight",
-	 "hdr": HDR_TIGHT, "grow": true,
-	 "note": "both cheap wins at once — the largest board without moving a button"},
-	{"name": "Thumb pad", "tier": "moderate", "chrome": CHROME_PAD,
+	{"name": "As it is now", "tier": "the arrangement",
+	 "note": "tight header, tools on their own panel, board grown into the win strip, pressure ring"},
+	{"name": "The original arrangement", "tier": "to compare against",
+	 "hdr": HDR_FULL, "chrome": CHROME_ROWS, "grow": false, "ring": false,
+	 "note": "what it looked like before: full header, plain button rows, countdown up top"},
+	{"name": "Thumb pad", "tier": "buttons moved", "chrome": CHROME_PAD,
 	 "note": "every button in one block under your thumb, nothing up top"},
-	{"name": "Pressure ring", "tier": "moderate", "ring": true,
-	 "note": "the Flow countdown drawn around the water's head, not up top"},
-	{"name": "Clue rails all round", "tier": "moderate", "rails": true,
+	{"name": "Clue rails all round", "tier": "board changed", "rails": true,
 	 "note": "clues repeated right and bottom so one is always near your work"},
-	{"name": "Landscape, two-handed", "tier": "radical",
-	 "land": true, "chrome": CHROME_SIDE, "hdr": HDR_TIGHT,
-	 "note": "board centred, tools under the left thumb, utilities right"},
-	{"name": "Board first", "tier": "radical",
-	 "hdr": HDR_CHIP, "chrome": CHROME_BAR, "grow": true,
+	{"name": "Board first", "tier": "board changed",
+	 "hdr": HDR_CHIP, "chrome": CHROME_BAR,
 	 "note": "board fills the screen; the controls slide up when you want them"},
-	{"name": "No palette, tap to cycle", "tier": "radical",
-	 "input": IN_CYCLE, "chrome": CHROME_NONE, "grow": true,
+	{"name": "Landscape, two-handed", "tier": "turned sideways",
+	 "land": true, "chrome": CHROME_SIDE,
+	 "note": "board centred, tools under the left thumb, utilities right"},
+	{"name": "No palette, tap to cycle", "tier": "input changed",
+	 "input": IN_CYCLE, "chrome": CHROME_NONE,
 	 "note": "a tap cycles blank → pipe → crossed off; no palette to aim at"},
-	{"name": "Workbench", "tier": "radical",
-	 "chrome": CHROME_TRAY, "hdr": HDR_TIGHT,
+	{"name": "Workbench", "tier": "dressed up", "chrome": CHROME_TRAY,
 	 "note": "blueprint on a bench, tools in a parts tray, a pressure gauge"},
-	{"name": "Recommended: 1 + 2 + 3 + 6", "tier": "combination",
-	 "hdr": HDR_TIGHT, "chrome": CHROME_PANEL, "grow": true, "ring": true,
-	 "note": "the cheap wins plus the pressure ring, all together"},
 ]
+
 
 # Flow timings. These are the dials to turn after a playtest: they decide
 # whether this is tense or merely unfair.
@@ -671,16 +660,35 @@ func _load_puzzle(i: int) -> void:
 	queue_redraw()
 
 
-func _lay(key: String, dflt: Variant) -> Variant:
-	return L.get(key, dflt)
+# The arrangement the game ships with, chosen after comparing the variants: a
+# tight header, the two tools raised on their own panel, the board grown into
+# the dead win strip, and the pressure countdown drawn around the water's head.
+#
+# A layout variant is this with the few keys it names overridden, so a variant
+# only has to say what it changes -- and there is exactly one place to change
+# what "the arrangement" means. These used to be defaults written out at each
+# lookup, which meant the same answer was spelled in nine places.
+const BASE := {
+	"land": false,
+	"hdr": HDR_TIGHT,
+	"chrome": CHROME_PANEL,
+	"input": IN_PALETTE,
+	"grow": true,
+	"ring": true,
+	"rails": false,
+}
+
+
+func _lay(key: String) -> Variant:
+	return L.get(key, BASE[key])        # an unknown key is a bug, not a default
 
 
 func _chrome() -> int:
-	return int(_lay("chrome", CHROME_ROWS))
+	return int(_lay("chrome"))
 
 
 func _input_mode() -> int:
-	return int(_lay("input", IN_PALETTE))
+	return int(_lay("input"))
 
 
 func _apply_layout() -> void:
@@ -689,7 +697,7 @@ func _apply_layout() -> void:
 	layout = wrapi(layout, 0, LAYOUTS.size())
 	L = LAYOUTS[layout]
 
-	if bool(_lay("land", false)):
+	if bool(_lay("land")):
 		VW = 1080.0
 		VH = 760.0
 	else:
@@ -699,13 +707,13 @@ func _apply_layout() -> void:
 	if win != null:
 		win.content_scale_size = Vector2i(int(VW), int(VH))
 
-	match int(_lay("hdr", HDR_FULL)):
+	match int(_lay("hdr")):
 		HDR_TIGHT: head_h = 124.0
 		HDR_CHIP: head_h = 58.0
 		_: head_h = 208.0
 
 	side_w = 0.0
-	banner_gap = 0.0 if bool(_lay("grow", false)) else 90.0
+	banner_gap = 0.0 if bool(_lay("grow")) else 90.0
 	match _chrome():
 		CHROME_PANEL: ctrl_h = 182.0
 		CHROME_BAR:
@@ -741,7 +749,7 @@ func _layout() -> void:
 	var avail_w := VW - 40.0 - side_w * 2.0
 	var top := head_h
 	var avail_h := (VH - ctrl_h - banner_gap) - top
-	var rails: bool = bool(_lay("rails", false))
+	var rails: bool = bool(_lay("rails"))
 
 	# The gutters have to hold the longest clue in either direction, so size
 	# the cells and the gutters together: two passes settle it.
@@ -1267,7 +1275,7 @@ func _draw() -> void:
 		_draw_water()
 	_draw_flanges()
 	_draw_taps()
-	if bool(_lay("ring", false)):
+	if bool(_lay("ring")):
 		_draw_pressure_ring()
 	if lost:
 		_draw_burst()
@@ -1313,7 +1321,7 @@ func _draw_flow_line(y: float, size := 17) -> void:
 		return
 	_text_c("PRESSURE BUILDING — %.1f s" % pressure_left, Vector2(VW * 0.5, y),
 			size + 1, C_BAD)
-	if bool(_lay("ring", false)):
+	if bool(_lay("ring")):
 		return                        # the ring on the board carries it
 	var frac := clampf(pressure_left / PRESSURE_SECONDS, 0.0, 1.0)
 	var bw := 300.0
@@ -1323,7 +1331,7 @@ func _draw_flow_line(y: float, size := 17) -> void:
 
 
 func _draw_header() -> void:
-	match int(_lay("hdr", HDR_FULL)):
+	match int(_lay("hdr")):
 		HDR_TIGHT:
 			_text_c("PIPEGRAM", Vector2(VW * 0.5, 32), 26, C_ACCENT)
 			_text_c(_status_text(), Vector2(VW * 0.5, 58), 15,

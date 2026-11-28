@@ -116,22 +116,29 @@ footholds before you start. Clue numbers grey out as that line is satisfied.
 
 ### Layouts
 
-The screen arrangement is a **playable variant**, not a fixed design. `L` (or
-the **Layouts** button) opens a picker with 13 of them — the current one, eleven
-alternatives from slight to radical, and a recommended combination. `[` and `]`
-step through them without opening the picker, so you can compare two
-arrangements on the same board mid-puzzle.
+**The arrangement** was picked by building the alternatives and comparing them.
+It is a tight header, the two tools raised on their own panel, the board grown
+into the dead win/lose strip, and the pressure countdown drawn as a ring around
+the water's head rather than a bar up top. On a 6×6 that is a 104 px cell
+against the original's 88 px.
 
-They differ in where the board sits and how the buttons are arranged:
+It lives in one place, `BASE` at the top of `scripts/Main.gd`. A layout variant
+is `BASE` with the few keys it names overridden, so a variant only says what it
+changes — and there is a single place to change what the arrangement *is*. The
+defaults used to be written out at each lookup, which meant the same answer was
+spelled in nine places and could drift apart.
+
+`L` (or the **Layouts** button) opens a picker with the arrangement and seven
+alternatives. `[` and `]` step through them without opening the picker, so you
+can compare two on the same board mid-puzzle.
 
 | | |
 |---|---|
-| **Tight header** · **Clear hierarchy** · **Board into the banner** · **Bigger board, tight header** | the same furniture, moved: how much the header takes, and how the banner and the board share what is left |
+| **The original arrangement** | what it looked like before the choice: full header, plain button rows, a separate win strip, countdown up top. Kept so the two can be flipped between |
 | **Thumb pad** | every control on a pad under your thumb, nothing along the top |
-| **Pressure ring** | the pressure countdown as a ring around the water's head instead of a bar |
 | **Clue rails all round** | clues on all four sides, so you never read a long line across the whole board |
 | **Board first** | the board fills the screen; the controls slide up when you want them |
-| **No palette, tap to cycle** | no palette at all — a tap cycles blank → pipe → crossed off. With two states there is nothing to aim at, so this is arguably the best fit |
+| **No palette, tap to cycle** | no palette at all — a tap cycles blank → pipe → crossed off. With two states there is nothing to aim at |
 | **Workbench** | a blueprint on a bench, the two marks in a parts tray, a pressure gauge for a bar |
 
 One is a different orientation: **Landscape, two-handed** swaps the viewport to
@@ -145,7 +152,7 @@ heavy tools/shots.sh /tmp/pipegram-shots 6 flow
 ```
 
 A layout's faults are geometric, and they are tedious and unreliable to catch by
-eye across thirteen screenshots, so the geometry is checked instead:
+eye across eight screenshots, so the geometry is checked instead:
 
 ```bash
 godot --path . -- --layoutaudit --puzzle 6
@@ -162,9 +169,9 @@ It ends by planting two faults it must catch — one rect off the edge, one too
 small to hit — and failing if it misses them, because a clean run from a check
 that cannot fail would mean nothing.
 
-The pressure ring hides its whole point in a still, because it only appears once
-the water has caught the frontier. `--pressure` sets that moment up so it can be
-photographed.
+The pressure ring hides its whole point in a still, because it only appears
+once the water has caught the frontier. `--pressure` sets that moment up so it
+can be photographed.
 
 Everything is tap-only on purpose: no swipe gestures. Swipes collide with
 drag-painting and with the browser's own scrolling, which misfires exactly when
